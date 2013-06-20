@@ -28,6 +28,7 @@ import org.apache.felix.scr.annotations.ConfigurationPolicy;
 import org.apache.felix.scr.annotations.Property;
 import org.apache.jackrabbit.mk.api.MicroKernel;
 import org.apache.jackrabbit.oak.plugins.mongomk.util.MongoConnection;
+import org.apache.jackrabbit.oak.spi.whiteboard.OsgiWhiteboard;
 import org.apache.sling.commons.osgi.PropertiesUtil;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceRegistration;
@@ -86,7 +87,11 @@ public class MongoMicroKernelService {
 
         logger.info("Connected to database {}", mongoDB);
 
-        mk = new MongoMK.Builder().memoryCacheSize(cacheSize * MB).setMongoDB(mongoDB).open();
+        mk = new MongoMK.Builder()
+                        .memoryCacheSize(cacheSize * MB)
+                        .with(new OsgiWhiteboard(context))
+                        .setMongoDB(mongoDB)
+                        .open();
 
         Properties props = new Properties();
         props.setProperty("oak.mk.type", "mongo");

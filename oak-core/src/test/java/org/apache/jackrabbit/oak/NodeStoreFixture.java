@@ -88,7 +88,8 @@ public abstract class NodeStoreFixture {
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
+            super.close();
             kernel.dispose();
         }
     }

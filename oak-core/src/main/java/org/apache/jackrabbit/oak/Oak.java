@@ -69,6 +69,7 @@ import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.jackrabbit.oak.spi.state.NodeStore;
 import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
+import org.apache.jackrabbit.oak.spi.whiteboard.SimpleWhiteboard;
 import org.apache.jackrabbit.oak.spi.whiteboard.Whiteboard;
 import org.apache.jackrabbit.oak.spi.whiteboard.WhiteboardUtils;
 
@@ -87,8 +88,6 @@ public class Oak {
      */
     public static final String DEFAULT_WORKSPACE_NAME = "default";
 
-    private final NodeStore store;
-
     private final List<RepositoryInitializer> initializers = newArrayList();
 
     private final List<QueryIndexProvider> queryIndexProviders = newArrayList();
@@ -104,6 +103,10 @@ public class Oak {
     private ScheduledExecutorService executor = newScheduledThreadPool(0);
 
     private MBeanServer mbeanServer;
+
+    private NodeStore store;
+
+    private MicroKernel kernel;
 
     private String defaultWorkspaceName = DEFAULT_WORKSPACE_NAME;
 
@@ -123,63 +126,7 @@ public class Oak {
         return getValue(properties, name, type, null);
     }
 
-    private Whiteboard whiteboard = new Whiteboard() {
-        @Override
-        public <T> Registration register(
-                Class<T> type, T service, Map<?, ?> properties) {
-            Future<?> future = null;
-            if (executor != null && type == Runnable.class) {
-                Runnable runnable = (Runnable) service;
-                Long period =
-                        getValue(properties, "scheduler.period", Long.class);
-                if (period != null) {
-                    Boolean concurrent = getValue(
-                            properties, "scheduler.concurrent",
-                            Boolean.class, Boolean.FALSE);
-                    if (concurrent) {
-                        future = executor.scheduleAtFixedRate(
-                                runnable, period, period, TimeUnit.SECONDS);
-                    } else {
-                        future = executor.scheduleWithFixedDelay(
-                                runnable, period, period, TimeUnit.SECONDS);
-                    }
-                }
-            }
-
-            ObjectName objectName = null;
-            Object name = properties.get("jmx.objectname");
-            if (mbeanServer != null && name != null) {
-                try {
-                    if (name instanceof ObjectName) {
-                        objectName = (ObjectName) name;
-                    } else {
-                        objectName = new ObjectName(String.valueOf(name));
-                    }
-                    mbeanServer.registerMBean(service, objectName);
-                } catch (JMException e) {
-                    // ignore
-                }
-            }
-
-            final Future<?> f = future;
-            final ObjectName on = objectName;
-            return new Registration() {
-                @Override
-                public void unregister() {
-                    if (f != null) {
-                        f.cancel(false);
-                    }
-                    if (on != null) {
-                        try {
-                            mbeanServer.unregisterMBean(on);
-                        } catch (JMException e) {
-                            // ignore
-                        }
-                    }
-                }
-            };
-        }
-    };
+    private Whiteboard whiteboard = new SimpleWhiteboard();
 
     /**
      * Flag controlling the asynchronous indexing behavior. If false (default)
@@ -193,7 +140,7 @@ public class Oak {
     }
 
     public Oak(MicroKernel kernel) {
-        this(new KernelNodeStore(checkNotNull(kernel)));
+        this.kernel = checkNotNull(kernel);
     }
 
     public Oak() {
@@ -365,6 +312,10 @@ public class Oak {
     }
 
     public ContentRepository createContentRepository() {
+        if(store == null){
+            store = new KernelNodeStore(kernel,KernelNodeStore.DEFAULT_CACHE_SIZE,whiteboard);
+        }
+
         IndexEditorProvider indexEditors = CompositeIndexEditorProvider.compose(indexEditorProviders);
         OakInitializer.initialize(store, new CompositeInitializer(initializers), indexEditors);
 

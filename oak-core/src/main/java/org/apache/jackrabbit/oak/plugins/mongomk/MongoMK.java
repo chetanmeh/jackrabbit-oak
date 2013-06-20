@@ -39,6 +39,7 @@ import javax.annotation.Nullable;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.Weigher;
+import com.google.common.collect.Lists;
 import org.apache.jackrabbit.mk.api.MicroKernel;
 import org.apache.jackrabbit.mk.api.MicroKernelException;
 import org.apache.jackrabbit.mk.blobs.BlobStore;
@@ -47,6 +48,7 @@ import org.apache.jackrabbit.mk.json.JsopReader;
 import org.apache.jackrabbit.mk.json.JsopStream;
 import org.apache.jackrabbit.mk.json.JsopTokenizer;
 import org.apache.jackrabbit.mk.json.JsopWriter;
+import org.apache.jackrabbit.oak.api.jmx.CacheStatsMBean;
 import org.apache.jackrabbit.oak.plugins.mongomk.DocumentStore.Collection;
 import org.apache.jackrabbit.oak.plugins.mongomk.Node.Children;
 import org.apache.jackrabbit.oak.plugins.mongomk.Revision.RevisionComparator;
@@ -54,10 +56,15 @@ import org.apache.jackrabbit.oak.plugins.mongomk.blob.MongoBlobStore;
 import org.apache.jackrabbit.oak.plugins.mongomk.util.TimingDocumentStoreWrapper;
 import org.apache.jackrabbit.oak.plugins.mongomk.util.Utils;
 import org.apache.jackrabbit.oak.commons.PathUtils;
+import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
+import org.apache.jackrabbit.oak.spi.whiteboard.Whiteboard;
+import org.apache.jackrabbit.oak.util.GuavaCacheStats;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mongodb.DB;
+
+import static org.apache.jackrabbit.oak.spi.whiteboard.WhiteboardUtils.registerMBean;
 
 /**
  * A MicroKernel implementation that stores the data in a MongoDB.
@@ -195,6 +202,8 @@ public class MongoMK implements MicroKernel {
     private final UnmergedBranches branches;
 
     private boolean stopBackground;
+
+    private List<Registration> registrations = Lists.newArrayListWithCapacity(5);
     
     MongoMK(Builder builder) {
         DocumentStore s = builder.getDocumentStore();
@@ -226,19 +235,23 @@ public class MongoMK implements MicroKernel {
         nodeCache = CacheBuilder.newBuilder()
                         .weigher(builder.getWeigher())
                         .maximumWeight(builder.getNodeCacheSize())
-                        // .recordStats() FIXME: OAK-863
+                        .recordStats()
                         .build();
+
 
         nodeChildrenCache =  CacheBuilder.newBuilder()
                         .weigher(builder.getWeigher())
-                        //.recordStats() FIXME: OAK-863
+                        .recordStats()
                         .maximumWeight(builder.getChildrenCacheSize())
                         .build();
-        
+
         diffCache = CacheBuilder.newBuilder()
                 .maximumSize(CACHE_DIFF)
+                .recordStats()
                 .build();
-        
+
+        registerJMXBeans(builder.getWhiteboard(),builder);
+
         init();
         // initial reading of the revisions of other cluster nodes
         backgroundRead();
@@ -246,7 +259,7 @@ public class MongoMK implements MicroKernel {
         headRevision = newRevision();
         LOG.info("Initialized MongoMK with clusterNodeId: {}", clusterId);
     }
-    
+
     void init() {
         headRevision = newRevision();
         Node n = readNode("/", headRevision);
@@ -417,6 +430,11 @@ public class MongoMK implements MicroKernel {
                 clusterNodeInfo.dispose();
             }
             store.dispose();
+
+            for(Registration reg : registrations){
+                reg.unregister();
+            }
+            registrations.clear();
             LOG.info("Disposed MongoMK with clusterNodeId: {}", clusterId);
         }
     }
@@ -1514,6 +1532,30 @@ public class MongoMK implements MicroKernel {
             nodeChildrenCache.put(key, c2);
         }
     }
+
+    private void registerJMXBeans(Whiteboard wb, Builder b){
+        registrations.add(
+                registerMBean(wb,
+                        CacheStatsMBean.class,
+                        new GuavaCacheStats(nodeCache, b.getWeigher(), b.getNodeCacheSize()),
+                        CacheStatsMBean.TYPE,
+                        "MongoMk-Node")
+        );
+        registrations.add(
+                registerMBean(wb,
+                        CacheStatsMBean.class,
+                        new GuavaCacheStats(nodeChildrenCache, b.getWeigher(), b.getChildrenCacheSize()),
+                        CacheStatsMBean.TYPE,
+                        "MongoMk-NodeChildren")
+        );
+        registrations.add(
+                registerMBean(wb,
+                        CacheStatsMBean.class,
+                        new GuavaCacheStats(diffCache),
+                        CacheStatsMBean.TYPE,
+                        "MongoMk-DiffCache")
+        );
+    }
     
     /**
      * A background thread.
@@ -1562,6 +1604,8 @@ public class MongoMK implements MicroKernel {
         private long nodeCacheSize;
         private long childrenCacheSize;
         private long documentCacheSize;
+        private Whiteboard whiteboard = Whiteboard.DEFAULT;
+        private DB db;
 
         public Builder() {
             memoryCacheSize(DEFAULT_MEMORY_CACHE_SIZE);
@@ -1574,10 +1618,7 @@ public class MongoMK implements MicroKernel {
          * @return this
          */
         public Builder setMongoDB(DB db) {
-            if (db != null) {
-                this.documentStore = new MongoDocumentStore(db, this);
-                this.blobStore = new MongoBlobStore(db);
-            }
+            this.db = db;
             return this;
         }
         
@@ -1608,9 +1649,6 @@ public class MongoMK implements MicroKernel {
         }
         
         public DocumentStore getDocumentStore() {
-            if (documentStore == null) {
-                documentStore = new MemoryDocumentStore();
-            }
             return documentStore;
         }
 
@@ -1626,9 +1664,6 @@ public class MongoMK implements MicroKernel {
         }
 
         public BlobStore getBlobStore() {
-            if (blobStore == null) {
-                blobStore = new MemoryBlobStore();
-            }
             return blobStore;
         }
 
@@ -1668,7 +1703,16 @@ public class MongoMK implements MicroKernel {
             return weigher;
         }
 
-        public Builder weigher(Weigher<String, Object> weigher) {
+        public Builder with(Whiteboard whiteboard){
+            this.whiteboard = whiteboard;
+            return this;
+        }
+
+        public Whiteboard getWhiteboard() {
+            return whiteboard;
+        }
+
+        public Builder withWeigher(Weigher<String, Object> weigher) {
             this.weigher = weigher;
             return this;
         }
@@ -1698,6 +1742,14 @@ public class MongoMK implements MicroKernel {
          * @return the MongoMK instance
          */
         public MongoMK open() {
+            if(this.documentStore == null){
+                this.documentStore = (db != null) ? new MongoDocumentStore(db,this) : new MemoryDocumentStore();
+            }
+
+            if(blobStore == null){
+                this.blobStore = (db != null) ? new MongoBlobStore(db): new MemoryBlobStore();
+            }
+
             return new MongoMK(this);
         }
     }

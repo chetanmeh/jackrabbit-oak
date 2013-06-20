@@ -32,6 +32,8 @@ import org.apache.jackrabbit.oak.security.SecurityProviderImpl;
 import org.apache.jackrabbit.oak.spi.lifecycle.OakInitializer;
 import org.apache.jackrabbit.oak.spi.lifecycle.RepositoryInitializer;
 import org.apache.jackrabbit.oak.spi.state.NodeStore;
+import org.apache.jackrabbit.oak.spi.whiteboard.OsgiWhiteboard;
+import org.apache.jackrabbit.oak.spi.whiteboard.Whiteboard;
 import org.osgi.framework.BundleActivator;
 import org.osgi.framework.BundleContext;
 import org.osgi.framework.ServiceReference;
@@ -45,7 +47,9 @@ public class Activator implements BundleActivator, ServiceTrackerCustomizer, Rep
 
     private ServiceTracker microKernelTracker;
 
-    // see OAK-795 for a reason why the nodeStore tracker is disabled 
+    private Whiteboard whiteboard;
+
+    // see OAK-795 for a reason why the nodeStore tracker is disabled
     // private ServiceTracker nodeStoreTracker;
 
     private final OsgiIndexProvider indexProvider = new OsgiIndexProvider();
@@ -58,12 +62,14 @@ public class Activator implements BundleActivator, ServiceTrackerCustomizer, Rep
 
     private final Map<ServiceReference, ServiceRegistration> services = new HashMap<ServiceReference, ServiceRegistration>();
 
+    private final List<KernelNodeStore> kernelNodeStores = new ArrayList<KernelNodeStore>();
+
     //----------------------------------------------------< BundleActivator >---
 
     @Override
     public void start(BundleContext bundleContext) throws Exception {
         context = bundleContext;
-
+        whiteboard = new OsgiWhiteboard(bundleContext);
         indexProvider.start(bundleContext);
         indexEditorProvider.start(bundleContext);
         validatorProvider.start(bundleContext);
@@ -85,6 +91,10 @@ public class Activator implements BundleActivator, ServiceTrackerCustomizer, Rep
         indexEditorProvider.stop();
         validatorProvider.stop();
         repositoryInitializerTracker.stop();
+
+        for(KernelNodeStore store : kernelNodeStores){
+            store.close();
+        }
     }
 
     //-------------------------------------------< ServiceTrackerCustomizer >---
@@ -94,10 +104,12 @@ public class Activator implements BundleActivator, ServiceTrackerCustomizer, Rep
         Object service = context.getService(reference);
         if (service instanceof MicroKernel) {
             MicroKernel kernel = (MicroKernel) service;
+            KernelNodeStore store = new KernelNodeStore(kernel,KernelNodeStore.DEFAULT_CACHE_SIZE,whiteboard);
             services.put(reference, context.registerService(
                     NodeStore.class.getName(),
-                    new KernelNodeStore(kernel),
+                    store,
                     new Properties()));
+            kernelNodeStores.add(store);
         } else if (service instanceof NodeStore) {
             NodeStore store = (NodeStore) service;
             OakInitializer.initialize(store, repositoryInitializerTracker, indexEditorProvider);
@@ -106,6 +118,7 @@ public class Activator implements BundleActivator, ServiceTrackerCustomizer, Rep
                 .with(new SecurityProviderImpl())
                 .with(validatorProvider)
                 .with(indexProvider)
+                .with(whiteboard)
                 .with(indexEditorProvider);
             services.put(reference, context.registerService(
                     ContentRepository.class.getName(),

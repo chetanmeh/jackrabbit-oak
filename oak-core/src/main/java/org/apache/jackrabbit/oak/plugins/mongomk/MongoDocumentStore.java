@@ -28,8 +28,11 @@ import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
 
 import org.apache.jackrabbit.mk.api.MicroKernelException;
+import org.apache.jackrabbit.oak.api.jmx.CacheStatsMBean;
 import org.apache.jackrabbit.oak.plugins.mongomk.UpdateOp.Operation;
 import org.apache.jackrabbit.oak.plugins.mongomk.util.Utils;
+import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
+import org.apache.jackrabbit.oak.util.GuavaCacheStats;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +47,8 @@ import com.mongodb.MongoException;
 import com.mongodb.QueryBuilder;
 import com.mongodb.WriteConcern;
 import com.mongodb.WriteResult;
+
+import static org.apache.jackrabbit.oak.spi.whiteboard.WhiteboardUtils.registerMBean;
 
 /**
  * A document store that uses MongoDB as the backend.
@@ -63,6 +68,8 @@ public class MongoDocumentStore implements DocumentStore {
     private long timeSum;
     
     private final Cache<String, CachedDocument> nodesCache;
+    
+    private final Registration jmxReg;
 
     public MongoDocumentStore(DB db, MongoMK.Builder builder) {
         nodes = db.getCollection(
@@ -82,9 +89,17 @@ public class MongoDocumentStore implements DocumentStore {
         // TODO expire entries if the parent was changed
         nodesCache = CacheBuilder.newBuilder()
                 .weigher(builder.getWeigher())
-                //.recordStats() FIXME: OAK-863
+                .recordStats() 
                 .maximumWeight(builder.getDocumentCacheSize())
                 .build();
+
+        jmxReg = registerMBean(
+                    builder.getWhiteboard(),
+                    CacheStatsMBean.class,
+                    new GuavaCacheStats(nodesCache, builder.getWeigher(),
+                        builder.getDocumentCacheSize()), CacheStatsMBean.TYPE,
+                    "MongoMk-Documents"
+                );
         
     }
     
@@ -445,6 +460,9 @@ public class MongoDocumentStore implements DocumentStore {
             LOG.debug("MongoDB time: " + timeSum);
         }
         nodes.getDB().getMongo().close();
+        if(jmxReg != null){
+            jmxReg.unregister();
+        }
     }
     
     private static void log(String message, Object... args) {

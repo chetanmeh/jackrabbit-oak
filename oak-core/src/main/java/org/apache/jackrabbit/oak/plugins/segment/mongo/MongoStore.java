@@ -77,6 +77,7 @@ public class MongoStore implements SegmentStore {
 
     @Override
     public void close() {
+        cache.close();
     }
 
     @Override

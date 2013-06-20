@@ -36,6 +36,7 @@ import org.apache.jackrabbit.oak.spi.state.AbstractNodeStore;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.jackrabbit.oak.spi.state.NodeStore;
 import org.apache.jackrabbit.oak.spi.state.NodeStoreBranch;
+import org.apache.jackrabbit.oak.spi.whiteboard.OsgiWhiteboard;
 import org.osgi.service.component.ComponentContext;
 
 import com.mongodb.Mongo;
@@ -95,7 +96,8 @@ public class SegmentNodeStoreService extends AbstractNodeStore {
             int cache = Integer.parseInt(String.valueOf(properties.get(CACHE)));
 
             mongo = new Mongo(host, port);
-            store = new MongoStore(mongo.getDB(db), cache * MB);
+            SegmentCache segmentCache = new SegmentCache(cache * MB,new OsgiWhiteboard(context.getBundleContext()));
+            store = new MongoStore(mongo.getDB(db), segmentCache);
         }
 
         delegate = new SegmentNodeStore(store);

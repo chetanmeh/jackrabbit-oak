@@ -22,6 +22,12 @@ import java.util.concurrent.ExecutionException;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
+import org.apache.jackrabbit.oak.api.jmx.CacheStatsMBean;
+import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
+import org.apache.jackrabbit.oak.spi.whiteboard.Whiteboard;
+import org.apache.jackrabbit.oak.util.GuavaCacheStats;
+
+import static org.apache.jackrabbit.oak.spi.whiteboard.WhiteboardUtils.registerMBean;
 
 /**
  * Combined memory and disk cache for segments.
@@ -32,11 +38,13 @@ public class SegmentCache {
 
     private final Cache<UUID, Segment> memoryCache;
 
+    private final Registration jmxReg;
+
     // private final Cache<UUID, File> diskCache;
 
     // private final File diskCacheDirectory;
 
-    public SegmentCache(long memoryCacheSize) {
+    public SegmentCache(long memoryCacheSize, Whiteboard wb) {
 //        this.diskCacheDirectory = diskCacheDirectory;
 //        this.diskCache = CacheBuilder.newBuilder()
 //                .maximumWeight(diskCacheSize)
@@ -48,6 +56,7 @@ public class SegmentCache {
 //                }).build();
         this.memoryCache = CacheBuilder.newBuilder()
                 .maximumWeight(memoryCacheSize)
+                .recordStats()
                 .weigher(Segment.WEIGHER)
 //                .removalListener(new RemovalListener<UUID, Segment>() {
 //                    @Override
@@ -57,6 +66,18 @@ public class SegmentCache {
 //                    }
 //                })
                 .build();
+
+        jmxReg = registerMBean(
+                    wb,
+                    CacheStatsMBean.class,
+                    new GuavaCacheStats(memoryCache, Segment.WEIGHER, memoryCacheSize),
+                    CacheStatsMBean.TYPE,
+                    "Segment"
+                );
+    }
+
+    public SegmentCache(long memoryCacheSize){
+        this(memoryCacheSize, Whiteboard.DEFAULT);
     }
 
     public SegmentCache() {
@@ -78,6 +99,12 @@ public class SegmentCache {
 
     public void removeSegment(UUID segmentId) {
         memoryCache.invalidate(segmentId);
+    }
+
+    public void close(){
+        if(jmxReg != null){
+            jmxReg.unregister();
+        }
     }
 
 }

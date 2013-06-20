@@ -32,21 +32,26 @@ import com.google.common.util.concurrent.SettableFuture;
 
 import org.apache.jackrabbit.mk.api.MicroKernel;
 import org.apache.jackrabbit.mk.api.MicroKernelException;
+import org.apache.jackrabbit.oak.api.jmx.CacheStatsMBean;
 import org.apache.jackrabbit.oak.spi.commit.EmptyObserver;
 import org.apache.jackrabbit.oak.spi.commit.Observer;
 import org.apache.jackrabbit.oak.spi.state.AbstractNodeStore;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.jackrabbit.oak.spi.state.NodeStoreBranch;
+import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
+import org.apache.jackrabbit.oak.spi.whiteboard.Whiteboard;
+import org.apache.jackrabbit.oak.util.GuavaCacheStats;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static org.apache.jackrabbit.oak.spi.whiteboard.WhiteboardUtils.registerMBean;
 
 /**
  * {@code NodeStore} implementations against {@link MicroKernel}.
  */
 public class KernelNodeStore extends AbstractNodeStore {
 
-    private static final long DEFAULT_CACHE_SIZE = 16 * 1024 * 1024;
+    public static final long DEFAULT_CACHE_SIZE = 16 * 1024 * 1024;
 
     /**
      * The {@link MicroKernel} instance used to store the content tree.
@@ -61,21 +66,26 @@ public class KernelNodeStore extends AbstractNodeStore {
 
     private final LoadingCache<String, KernelNodeState> cache;
 
+    private final Registration jmxReg;
+
     /**
      * State of the current root node.
      */
     private KernelNodeState root;
 
-    public KernelNodeStore(final MicroKernel kernel, long cacheSize) {
+    public KernelNodeStore(final MicroKernel kernel, long cacheSize, Whiteboard whiteboard) {
         this.kernel = checkNotNull(kernel);
+
+        Weigher<String, KernelNodeState> weigher = new Weigher<String, KernelNodeState>() {
+            @Override
+            public int weigh(String key, KernelNodeState state) {
+                return state.getMemory();
+            }
+        };
         this.cache = CacheBuilder.newBuilder()
                 .maximumWeight(cacheSize)
-                .weigher(new Weigher<String, KernelNodeState>() {
-                    @Override
-                    public int weigh(String key, KernelNodeState state) {
-                        return state.getMemory();
-                    }
-                }).build(new CacheLoader<String, KernelNodeState>() {
+                .weigher(weigher)
+                .build(new CacheLoader<String, KernelNodeState>() {
                     @Override
                     public KernelNodeState load(String key) {
                         int slash = key.indexOf('/');
@@ -83,6 +93,7 @@ public class KernelNodeStore extends AbstractNodeStore {
                         String path = key.substring(slash);
                         return new KernelNodeState(kernel, path, revision, cache);
                     }
+
                     @Override
                     public ListenableFuture<KernelNodeState> reload(
                             String key, KernelNodeState oldValue) {
@@ -95,11 +106,23 @@ public class KernelNodeStore extends AbstractNodeStore {
                     }
                 });
 
+        jmxReg = registerMBean(
+                    whiteboard,
+                    CacheStatsMBean.class,
+                    new GuavaCacheStats(cache, weigher, cacheSize),
+                    CacheStatsMBean.TYPE,
+                    "KernelNodeState"
+        );
+
         try {
             this.root = cache.get(kernel.getHeadRevision() + '/');
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    public KernelNodeStore(final MicroKernel kernel, long cacheSize){
+        this(kernel, cacheSize, Whiteboard.DEFAULT);
     }
 
     public KernelNodeStore(MicroKernel kernel) {
@@ -159,6 +182,12 @@ public class KernelNodeStore extends AbstractNodeStore {
         } catch (MicroKernelException e) {
             // TODO: caused by the checkpoint no longer being available?
             return null;
+        }
+    }
+
+    public void close(){
+        if(jmxReg != null){
+            jmxReg.unregister();
         }
     }
 

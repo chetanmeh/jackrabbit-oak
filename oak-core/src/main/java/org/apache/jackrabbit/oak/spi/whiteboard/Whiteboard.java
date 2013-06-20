@@ -19,6 +19,11 @@ package org.apache.jackrabbit.oak.spi.whiteboard;
 import java.util.Map;
 
 public interface Whiteboard {
+    /**
+     * Default Whiteboard instance providing support for scheduling and
+     * JMX registration
+     */
+    Whiteboard DEFAULT = new DefaultWhiteboard();
 
     /**
      * Publishes the given service to the whiteboard. Use the returned
