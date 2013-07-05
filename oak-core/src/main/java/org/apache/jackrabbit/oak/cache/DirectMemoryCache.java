@@ -46,7 +46,7 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
      * As the key names used are path elements the in memory map maintained by DirectMemory
      * consumes lot more memory
      */
-    private static final int MAX_ELEMENTS_OFF_HEAP = 200000;
+    private static final int MAX_ELEMENTS_OFF_HEAP = 500000;
     private final AtomicInteger ai = new AtomicInteger();
 
     /**
