@@ -39,13 +39,13 @@ import java.io.IOException;
 
 public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V>, Closeable {
     private final int BUFFER_SIZE = Ram.Gb(1);
-    private final CacheService<String, V> cacheService;
+    private final CacheService<String, Object> cacheService;
     private final KryoSerializer serializer = new KryoSerializer();
 
     public DirectMemoryCacheWrapperFactory(long size) {
         int noOfBuffers = Math.max(1,(int) (size / BUFFER_SIZE));
         int buffSize = (int) Math.min(size,BUFFER_SIZE);
-        cacheService = new DirectMemory<String, V>()
+        cacheService = new DirectMemory<String, Object>()
                 .setNumberOfBuffers(noOfBuffers)
                 .setSize(buffSize)
                 .setSerializer(serializer)
