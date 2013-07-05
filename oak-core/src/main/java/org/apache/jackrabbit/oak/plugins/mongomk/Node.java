@@ -34,7 +34,7 @@ public class Node implements CacheValue {
     final Revision rev;
     final Map<String, String> properties = Utils.newMap();
     Revision lastRevision;
-    
+
     Node(String path, Revision rev) {
         this.path = path;
         this.rev = rev;
@@ -116,11 +116,10 @@ public class Node implements CacheValue {
     /**
      * A list of children for a node.
      */
-    static class Children implements CacheValue {
+    public static class Children implements CacheValue {
 
         final ArrayList<String> children = new ArrayList<String>();
         boolean hasMore;
-        long offset;
 
         @Override
         public int getMemory() {
@@ -135,7 +134,6 @@ public class Node implements CacheValue {
         public String toString() {
             return children.toString();
         }
-        
     }
 
 }

@@ -463,13 +463,19 @@ public class MongoDocumentStore implements DocumentStore {
     /**
      * A cache entry.
      */
-    static class CachedDocument implements CacheValue {
+    public static class CachedDocument implements CacheValue {
         
-        final long time = System.currentTimeMillis();
+        final long time;
         final Map<String, Object> value;
         
         CachedDocument(Map<String, Object> value) {
+            this(value, System.currentTimeMillis());
+
+        }
+
+        CachedDocument(Map<String, Object> value,long time) {
             this.value = value;
+            this.time = time;
         }
         
         @Override

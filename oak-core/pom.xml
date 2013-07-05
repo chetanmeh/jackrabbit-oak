@@ -232,6 +232,19 @@
       <artifactId>slf4j-api</artifactId>
     </dependency>
 
+    <dependency>
+      <groupId>com.esotericsoftware.kryo</groupId>
+      <artifactId>kryo</artifactId>
+      <version>2.21</version>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+       <groupId>org.apache.directmemory</groupId>
+       <artifactId>directmemory-cache</artifactId>
+       <version>0.1-incubating</version>
+       <optional>true</optional>
+    </dependency>
+
     <!-- Findbugs annotations -->
     <dependency>
       <groupId>com.google.code.findbugs</groupId>

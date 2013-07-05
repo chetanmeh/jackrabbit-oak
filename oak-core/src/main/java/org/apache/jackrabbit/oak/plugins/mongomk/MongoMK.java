@@ -46,10 +46,7 @@ import org.apache.jackrabbit.mk.json.JsopReader;
 import org.apache.jackrabbit.mk.json.JsopStream;
 import org.apache.jackrabbit.mk.json.JsopTokenizer;
 import org.apache.jackrabbit.mk.json.JsopWriter;
-import org.apache.jackrabbit.oak.cache.CacheLIRS;
-import org.apache.jackrabbit.oak.cache.CacheStats;
-import org.apache.jackrabbit.oak.cache.CacheValue;
-import org.apache.jackrabbit.oak.cache.EmpiricalWeigher;
+import org.apache.jackrabbit.oak.cache.*;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.plugins.mongomk.DocumentStore.Collection;
 import org.apache.jackrabbit.oak.plugins.mongomk.Node.Children;
@@ -1636,6 +1633,7 @@ public class MongoMK implements MicroKernel {
         private long childrenCacheSize;
         private long diffCacheSize;
         private long documentCacheSize;
+        private CacheWrapperFactory cacheWrapperFactory;
 
         public Builder() {
             memoryCacheSize(DEFAULT_MEMORY_CACHE_SIZE);
@@ -1742,8 +1740,13 @@ public class MongoMK implements MicroKernel {
             return weigher;
         }
 
-        public Builder withWeigher(Weigher<String, CacheValue> weigher) {
+        public Builder with(Weigher<String, CacheValue> weigher) {
             this.weigher = weigher;
+            return this;
+        }
+
+        public Builder with(CacheWrapperFactory factory){
+            this.cacheWrapperFactory = factory;
             return this;
         }
 
@@ -1792,8 +1795,15 @@ public class MongoMK implements MicroKernel {
                 return CacheLIRS.newBuilder().weigher(weigher).
                         maximumWeight(maxWeight).recordStats().build();
             }
-            return CacheBuilder.newBuilder().weigher(weigher).
-                    maximumWeight(maxWeight).recordStats().build();
+            CacheBuilder<String,CacheValue> builder = CacheBuilder.newBuilder().<String,CacheValue>weigher(weigher).
+                    maximumWeight(maxWeight).recordStats();
+
+            if(cacheWrapperFactory != null){
+                ForwardingListener listener = new ForwardingListener();
+                return cacheWrapperFactory.wrap(builder.removalListener(listener).build(),listener);
+            }
+
+            return builder.build();
         }
     }
 

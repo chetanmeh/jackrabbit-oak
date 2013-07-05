@@ -30,6 +30,7 @@ import org.apache.felix.scr.annotations.ConfigurationPolicy;
 import org.apache.felix.scr.annotations.Property;
 import org.apache.jackrabbit.mk.api.MicroKernel;
 import org.apache.jackrabbit.oak.api.jmx.CacheStatsMBean;
+import org.apache.jackrabbit.oak.cache.DirectMemoryCacheWrapperFactory;
 import org.apache.jackrabbit.oak.plugins.mongomk.util.MongoConnection;
 import org.apache.jackrabbit.oak.spi.whiteboard.OsgiWhiteboard;
 import org.apache.jackrabbit.oak.spi.whiteboard.Registration;
@@ -59,6 +60,7 @@ public class MongoMicroKernelService {
     private static final int DEFAULT_PORT = 27017;
     private static final String DEFAULT_DB = "oak";
     private static final int DEFAULT_CACHE = 256;
+    private static final int DEFAULT_OFF_HEAP = -1;
 
     @Property(value = DEFAULT_HOST)
     private static final String PROP_HOST = "host";
@@ -71,6 +73,10 @@ public class MongoMicroKernelService {
 
     @Property(intValue = DEFAULT_CACHE)
     private static final String PROP_CACHE = "cache";
+
+    @Property(intValue = DEFAULT_OFF_HEAP)
+    private static final String PROP_OFF_HEAP = "offheap";
+
     private static final long MB = 1024 * 1024;
 
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
@@ -86,6 +92,7 @@ public class MongoMicroKernelService {
         int port = PropertiesUtil.toInteger(config.get(PROP_PORT), DEFAULT_PORT);
         String db = PropertiesUtil.toString(config.get(PROP_DB), DEFAULT_DB);
         int cacheSize = PropertiesUtil.toInteger(config.get(PROP_CACHE), DEFAULT_CACHE);
+        int offHeap = PropertiesUtil.toInteger(config.get(PROP_OFF_HEAP), DEFAULT_OFF_HEAP);
 
         logger.info("Starting MongoDB MicroKernel with host={}, port={}, db={}",
                 new Object[] {host, port, db});
@@ -95,10 +102,16 @@ public class MongoMicroKernelService {
 
         logger.info("Connected to database {}", mongoDB);
 
-        mk = new MongoMK.Builder()
+        MongoMK.Builder mkbuilder = new MongoMK.Builder()
                         .memoryCacheSize(cacheSize * MB)
-                        .setMongoDB(mongoDB)
-                        .open();
+                        .setMongoDB(mongoDB);
+
+        if(offHeap != -1){
+            logger.info("Off heap cache support enabled with {} MB",offHeap);
+            mkbuilder.with(new DirectMemoryCacheWrapperFactory(offHeap * MB));
+        }
+
+        mk = mkbuilder.open();
 
         registerJMXBeans(mk, context);
 
