@@ -19,7 +19,9 @@
 
 package org.apache.jackrabbit.oak.cache;
 
+import com.google.common.base.Stopwatch;
 import com.google.common.cache.*;
+import com.google.common.cache.CacheStats;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -34,8 +36,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import static com.google.common.cache.AbstractCache.SimpleStatsCounter;
+import static com.google.common.cache.AbstractCache.StatsCounter;
 
 public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<String,V> implements RemovalListener<String,V>{
     private static final AtomicLong COUNTER = new AtomicLong();
@@ -47,6 +53,7 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
      * consumes lot more memory
      */
     private static final int MAX_ELEMENTS_OFF_HEAP = 500000;
+
     private final AtomicInteger ai = new AtomicInteger();
 
     /**
@@ -58,10 +65,11 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
      * It is used to partition key space to use same off heap cache
      * shared between multiple Guava cache
      */
-    private final String prefix = "__" + COUNTER.incrementAndGet();
+    private final String prefix = "" + COUNTER.incrementAndGet() + "_";
     private final CacheService<String,Object> offHeapCache;
+    private final StatsCounter statsCounter = new SimpleStatsCounter();
 
-    public DirectMemoryCache(CacheService<String, Object> offHeapCache,Cache<String,V> cache) {
+    public DirectMemoryCache(CacheService<String, Object> offHeapCache, Cache<String, V> cache) {
         super(cache);
         this.offHeapCache = offHeapCache;
     }
@@ -160,12 +168,33 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
         }
     }
 
+    public CacheStats offHeapStats(){
+        return statsCounter.snapshot();
+    }
+
     private V retrieve(Object key) {
+        Stopwatch watch = new Stopwatch().start();
+
         Object value =  offHeapCache.retrieve(prepareKey(key));
-        if(value instanceof KeyAwareValue
-                && ((KeyAwareValue) value).actualKey.equals(key)){
-            value = ((KeyAwareValue) value).value;
+        if(value instanceof KeyAwareValue){
+
+            //Check that key is actually the same as one associated with cache
+            //value as its possible that two key hash to same hashKey
+            if (((KeyAwareValue) value).actualKey.equals(key)) {
+                value = ((KeyAwareValue) value).value;
+            } else{
+                //Keys does not match due to hash collision
+                //nullify the value
+                value = null;
+            }
         }
+
+        if(value != null){
+            statsCounter.recordLoadSuccess(watch.elapsed(TimeUnit.NANOSECONDS));
+        }else{
+            statsCounter.recordMisses(1);
+        }
+
         return (V)value;
     }
 
@@ -197,6 +226,7 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
         String actualKey;
 
         public KeyAwareValue() {
+            //For serialization
         }
 
         private KeyAwareValue(String actualKey, V value) {

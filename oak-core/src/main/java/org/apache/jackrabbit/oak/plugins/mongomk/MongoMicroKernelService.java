@@ -102,14 +102,16 @@ public class MongoMicroKernelService {
 
         logger.info("Connected to database {}", mongoDB);
 
-        MongoMK.Builder mkbuilder = new MongoMK.Builder()
-                        .memoryCacheSize(cacheSize * MB)
-                        .setMongoDB(mongoDB);
+        MongoMK.Builder mkbuilder = new MongoMK.Builder();
 
         if(offHeap != -1){
             logger.info("Off heap cache support enabled with {} MB",offHeap);
             mkbuilder.with(new DirectMemoryCacheWrapperFactory(offHeap * MB));
         }
+
+        //Order of calls is important
+        mkbuilder.memoryCacheSize(cacheSize * MB)
+                .setMongoDB(mongoDB);
 
         mk = mkbuilder.open();
 

@@ -20,7 +20,6 @@
 package org.apache.jackrabbit.oak.cache;
 
 import com.esotericsoftware.kryo.Kryo;
-import com.esotericsoftware.kryo.Serializer;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.google.common.cache.Cache;
@@ -30,7 +29,6 @@ import org.apache.directmemory.measures.In;
 import org.apache.directmemory.measures.Ram;
 import org.apache.jackrabbit.oak.plugins.mongomk.MongoDocumentStore;
 import org.apache.jackrabbit.oak.plugins.mongomk.Node;
-import org.apache.jackrabbit.oak.plugins.mongomk.Revision;
 import org.apache.jackrabbit.oak.plugins.mongomk.Serializers;
 import org.apache.jackrabbit.oak.util.SimplePool;
 
@@ -49,7 +47,7 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
                 .setNumberOfBuffers(noOfBuffers)
                 .setSize(buffSize)
                 .setSerializer(serializer)
-                .setDisposalTime(In.minutes(15))
+                .setDisposalTime(In.minutes(5))
                 .newCacheService();
     }
 
