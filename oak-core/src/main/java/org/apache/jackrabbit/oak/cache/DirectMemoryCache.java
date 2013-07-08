@@ -161,11 +161,15 @@ public class DirectMemoryCache<V> extends ForwardingCache.SimpleForwardingCache<
                 return;
             }
 
-            String key = notification.getKey();
-            String preparedKey = prepareKey(key);
-            Object preparedValue =  prepareValue(key,notification.getValue());
-            offHeapCache.put(preparedKey,preparedValue);
+            putInternal(notification.getKey(),notification.getValue());
         }
+    }
+
+    private void putInternal(String key,V value){
+        String preparedKey = prepareKey(key);
+        Object preparedValue =  prepareValue(key,value);
+        offHeapCache.put(preparedKey,preparedValue);
+
     }
 
     public CacheStats offHeapStats(){

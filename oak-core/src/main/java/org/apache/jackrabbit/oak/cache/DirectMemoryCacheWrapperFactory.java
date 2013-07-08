@@ -23,6 +23,7 @@ import com.esotericsoftware.kryo.Kryo;
 import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.google.common.cache.Cache;
+import com.mongodb.BasicDBObject;
 import org.apache.directmemory.DirectMemory;
 import org.apache.directmemory.cache.CacheService;
 import org.apache.directmemory.measures.In;
@@ -144,9 +145,12 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
             kryo.setAutoReset(true);
             //kryo.setRegistrationRequired(true);
 
+            kryo.register(BasicDBObject.class,Serializers.BASIC_DB_OBJECT);
             kryo.register(Node.class, Serializers.NODE);
             kryo.register(Node.Children.class, Serializers.CHILDREN);
             kryo.register(MongoDocumentStore.CachedDocument.class, Serializers.DOCUMENTS);
+
+            kryo.setClassLoader(getClass().getClassLoader());
         }
 
         private void reset(){

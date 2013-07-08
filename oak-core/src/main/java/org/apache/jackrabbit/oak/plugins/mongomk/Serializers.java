@@ -6,6 +6,7 @@ import com.esotericsoftware.kryo.io.Input;
 import com.esotericsoftware.kryo.io.Output;
 import com.esotericsoftware.kryo.serializers.CollectionSerializer;
 import com.esotericsoftware.kryo.serializers.MapSerializer;
+import com.mongodb.BasicDBObject;
 
 import java.util.ArrayList;
 import java.util.Map;
@@ -89,22 +90,34 @@ public class Serializers {
         public void write(Kryo kryo, Output output, MongoDocumentStore.CachedDocument d) {
             output.writeLong(d.time);
 
-            //Write type of map
-            kryo.writeClass(output,d.value.getClass());
+            //Value can be null so need to handle it accordingly
+            Map<String, Object> value = d.value;
+            if(value != null){
+                output.writeBoolean(true);
+                kryo.writeClass(output,d.value.getClass());
 
-            MapSerializer ms = createSerializer(kryo);
-            ms.write(kryo,output,d.value);
+                MapSerializer ms = createSerializer(kryo);
+                ms.write(kryo,output,d.value);
+            }else{
+                output.writeBoolean(false);
+            }
         }
 
         @Override
         public MongoDocumentStore.CachedDocument read(Kryo kryo, Input input, Class<MongoDocumentStore.CachedDocument> type) {
             long time = input.readLong();
 
-            Class mapType = kryo.readClass(input).getType();
+            MongoDocumentStore.CachedDocument d = null;
+            boolean valueNotNull = input.readBoolean();
+            if(valueNotNull){
+                Class mapType = kryo.readClass(input).getType();
 
-            MapSerializer ms = createSerializer(kryo);
-            Map<String,Object> data = ms.read(kryo,input,mapType);
-            MongoDocumentStore.CachedDocument d = new MongoDocumentStore.CachedDocument(data,time);
+                MapSerializer ms = createSerializer(kryo);
+                Map<String,Object> data = ms.read(kryo,input,mapType);
+                d = new MongoDocumentStore.CachedDocument(data,time);
+            }else{
+                d = new MongoDocumentStore.CachedDocument(null,time);
+            }
             return d;
         }
 
@@ -113,6 +126,32 @@ public class Serializers {
             ms.setKeysCanBeNull(false);
             ms.setKeyClass(String.class,kryo.getSerializer(String.class));
             return ms;
+        }
+    };
+
+    public static Serializer BASIC_DB_OBJECT = new MapSerializer(){
+        @Override
+        public void write(Kryo kryo, Output output, Map map) {
+            output.writeBoolean(((BasicDBObject)map).isPartialObject());
+            super.write(kryo, output, map);
+        }
+
+        @Override
+        protected Map create(Kryo kryo, Input input, Class<Map> type) {
+            BasicDBObject bdo = new BasicDBObject();
+            if(input.readBoolean()){
+                bdo.markAsPartialObject();
+            }
+            return bdo;
+        }
+
+        @Override
+        protected Map createCopy(Kryo kryo, Map original) {
+            BasicDBObject bdo = new BasicDBObject();
+            if(original instanceof BasicDBObject && ((BasicDBObject) original).isPartialObject()){
+                bdo.markAsPartialObject();
+            }
+            return bdo;
         }
     };
 }
