@@ -31,10 +31,11 @@ import org.apache.directmemory.measures.Ram;
 import org.apache.jackrabbit.oak.plugins.mongomk.MongoDocumentStore;
 import org.apache.jackrabbit.oak.plugins.mongomk.Node;
 import org.apache.jackrabbit.oak.plugins.mongomk.Serializers;
-import org.apache.jackrabbit.oak.util.SimplePool;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V>, Closeable {
     private final int BUFFER_SIZE = Ram.Gb(1);
@@ -73,7 +74,7 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
     private static final class KryoSerializer
             implements org.apache.directmemory.serialization.Serializer {
         //Kryo class is not thread safe so using a pool
-        private KryoPool pool = new KryoPool("kryo", 30);
+        private final KryoPool pool = new KryoPool();
 
         /**
          * {@inheritDoc}
@@ -91,9 +92,6 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
 
                 kh.kryo.writeObject(kh.output, obj);
                 return kh.output.toBytes();
-            } catch (InterruptedException e) {
-                //TODO Handle it properly
-                throw new RuntimeException(e);
             } finally {
                 if (kh != null) {
                     pool.done(kh);
@@ -114,10 +112,7 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
 
                 Input input = new Input(source);
                 return kh.kryo.readObject(input, clazz);
-            } catch (InterruptedException e) {
-                //TODO Handle it properly
-                throw new RuntimeException(e);
-            } finally {
+            }finally {
                 if (kh != null) {
                     pool.done(kh);
                 }
@@ -158,20 +153,24 @@ public class DirectMemoryCacheWrapperFactory<V> implements CacheWrapperFactory<V
         }
     }
 
-    private static class KryoPool extends SimplePool<KryoHolder> {
+    private static class KryoPool  {
 
-        public KryoPool(String name, int size) {
-            super(name, size);
+        private final Queue<KryoHolder> objects = new ConcurrentLinkedQueue<KryoHolder>();
+
+        public KryoHolder get(){
+            KryoHolder kh;
+            if((kh = objects.poll()) == null){
+                kh =  new KryoHolder();
+            }
+            return kh;
         }
 
-        @Override
-        protected KryoHolder createNew() {
-            return new KryoHolder();
+        public void done(KryoHolder kh){
+            objects.offer(kh);
         }
 
-        @Override
         public void close() {
-            super.close();
+            objects.clear();
         }
     }
 
