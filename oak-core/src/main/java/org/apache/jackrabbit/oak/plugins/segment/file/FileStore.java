@@ -37,12 +37,14 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.jackrabbit.oak.api.Blob;
 import org.apache.jackrabbit.oak.cache.CacheLIRS;
+import org.apache.jackrabbit.oak.plugins.blob.BlobStoreBlob;
 import org.apache.jackrabbit.oak.plugins.segment.RecordId;
 import org.apache.jackrabbit.oak.plugins.segment.Segment;
 import org.apache.jackrabbit.oak.plugins.segment.SegmentIdFactory;
 import org.apache.jackrabbit.oak.plugins.segment.SegmentNodeState;
 import org.apache.jackrabbit.oak.plugins.segment.SegmentStore;
 import org.apache.jackrabbit.oak.plugins.segment.SegmentWriter;
+import org.apache.jackrabbit.oak.spi.blob.BlobStore;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.slf4j.Logger;
@@ -81,6 +83,8 @@ public class FileStore implements SegmentStore {
 
     private final File directory;
 
+    private final BlobStore blobStore;
+
     private final int maxFileSize;
 
     private final boolean memoryMapping;
@@ -114,20 +118,26 @@ public class FileStore implements SegmentStore {
      */
     private final CountDownLatch timeToClose = new CountDownLatch(1);
 
+    public FileStore(BlobStore blobStore, File directory, int maxFileSizeMB, boolean memoryMapping)
+            throws IOException {
+        this(blobStore, directory, EMPTY_NODE, maxFileSizeMB, DEFAULT_MEMORY_CACHE_SIZE, memoryMapping);
+    }
+
     public FileStore(File directory, int maxFileSizeMB, boolean memoryMapping)
             throws IOException {
-        this(directory, EMPTY_NODE, maxFileSizeMB, DEFAULT_MEMORY_CACHE_SIZE, memoryMapping);
+        this(null, directory, EMPTY_NODE, maxFileSizeMB, DEFAULT_MEMORY_CACHE_SIZE, memoryMapping);
     }
 
     public FileStore(File directory, int maxFileSizeMB, int cacheSizeMB,
             boolean memoryMapping) throws IOException {
-        this(directory, EMPTY_NODE, maxFileSizeMB, cacheSizeMB, memoryMapping);
+        this(null,directory, EMPTY_NODE, maxFileSizeMB, cacheSizeMB, memoryMapping);
     }
 
     public FileStore(
-            final File directory, NodeState initial, int maxFileSizeMB,
+            final BlobStore blobStore, final File directory, NodeState initial, int maxFileSizeMB,
             int cacheSizeMB, boolean memoryMapping) throws IOException {
         checkNotNull(directory).mkdirs();
+        this.blobStore = blobStore;
         this.directory = directory;
         this.maxFileSize = maxFileSizeMB * MB;
         this.memoryMapping = memoryMapping;
@@ -415,7 +425,15 @@ public class FileStore implements SegmentStore {
 
     @Override
     public Blob readBlob(String reference) {
-        return new FileBlob(reference); // FIXME: proper reference lookup
+        if(blobStore != null){
+            return new BlobStoreBlob(blobStore, reference);
+        }
+        throw new IllegalStateException("Attempt to read external reference ["+reference+"] " +
+                "without specifying BlobStore");
     }
 
+    @Override
+    public BlobStore getBlobStore() {
+        return blobStore;
+    }
 }

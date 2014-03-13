@@ -22,6 +22,7 @@ import javax.annotation.CheckForNull;
 import javax.annotation.Nonnull;
 
 import org.apache.jackrabbit.oak.api.Blob;
+import org.apache.jackrabbit.oak.spi.blob.BlobStore;
 
 public interface SegmentStore {
 
@@ -65,5 +66,11 @@ public interface SegmentStore {
      * @return external blob
      */
     Blob readBlob(String reference);
+
+    /**
+     * Returns the external BlobStore (if configured) with this store
+     */
+    @CheckForNull
+    BlobStore getBlobStore();
 
 }

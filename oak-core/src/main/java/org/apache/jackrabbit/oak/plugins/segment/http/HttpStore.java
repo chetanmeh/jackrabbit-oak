@@ -45,6 +45,7 @@ import org.apache.jackrabbit.oak.plugins.segment.SegmentWriter;
 
 import com.google.common.cache.Cache;
 import com.google.common.io.ByteStreams;
+import org.apache.jackrabbit.oak.spi.blob.BlobStore;
 
 public class HttpStore implements SegmentStore {
 
@@ -223,6 +224,11 @@ public class HttpStore implements SegmentStore {
 
     @Override @CheckForNull
     public Blob readBlob(String reference) {
+        return null;
+    }
+
+    @Override @CheckForNull
+    public BlobStore getBlobStore() {
         return null;
     }
 
