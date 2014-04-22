@@ -18,6 +18,7 @@ package org.apache.jackrabbit.oak.plugins.document;
 
 import java.io.InputStream;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -463,6 +464,7 @@ public class DocumentMK implements MicroKernel {
         private boolean useSimpleRevision;
         private long splitDocumentAgeMillis = 5 * 60 * 1000;
         private long offHeapCacheSize = -1;
+        private long maxReplicationLagMillis = TimeUnit.HOURS.toMillis(6);
         private Clock clock = Clock.SIMPLE;
         private Executor executor;
 
@@ -728,6 +730,15 @@ public class DocumentMK implements MicroKernel {
 
         public Clock getClock() {
             return clock;
+        }
+
+        public Builder setMaxReplicationLag(long duration, TimeUnit unit){
+            maxReplicationLagMillis = unit.toMillis(duration);
+            return this;
+        }
+
+        public long getMaxReplicationLagMillis() {
+            return maxReplicationLagMillis;
         }
 
         /**
