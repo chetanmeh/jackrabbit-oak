@@ -59,6 +59,8 @@ import org.codehaus.groovy.tools.shell.commands.SetCommand
 import org.codehaus.groovy.tools.shell.commands.ShowCommand
 import org.codehaus.groovy.tools.shell.util.Preferences
 
+import org.codehaus.groovy.tools.shell.Command as ShellCommand
+
 @CompileStatic
 class GroovyConsole {
     private final List<String> args
@@ -94,12 +96,14 @@ class GroovyConsole {
         if(quiet) {
             io.verbosity = IO.Verbosity.QUIET
         }
-        Groovysh sh = new OakSh(getClass().getClassLoader(), binding, io, this.&registerCommands)
+        Groovysh sh = new OakSh(getClass().getClassLoader(),
+                binding, io, this.&registerCommands)
+        sh.imports << 'org.apache.jackrabbit.oak.plugins.document.*'
         return sh
     }
 
     private void registerCommands(Groovysh shell){
-        List<? extends org.codehaus.groovy.tools.shell.Command> commands = []
+        List<? extends ShellCommand> commands = []
         commands.addAll([
                 new ExitCommand(shell),
                 new ImportCommand(shell),
@@ -140,8 +144,8 @@ class GroovyConsole {
             ])
         }
 
-        commands.each {
-            shell.register(it)
+        commands.each {ShellCommand command ->
+            shell.register(command)
         }
     }
 
