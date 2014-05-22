@@ -41,18 +41,17 @@ class CdCommand extends CommandSupport{
 
     @Override
     protected List<Completer> createCompleters() {
-        def loader = {
-            def list = []
-
-            getSession().getWorkingNode().childNodeNames.each {
-                list << it
-            }
-
-            return list
-        }
-
         return [
-                new SimpleCompletor(loader),
+                new SimpleCompletor(){
+                    @Override
+                    SortedSet getCandidates() {
+                        SortedSet<String> names = new TreeSet<String>()
+                        getSession().getWorkingNode().childNodeNames.each {
+                            names << it
+                        }
+                        return names
+                    }
+                },
                 null
         ]
     }
