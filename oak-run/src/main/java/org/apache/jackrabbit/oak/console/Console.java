@@ -63,6 +63,8 @@ public class Console {
                 .withRequiredArg().ofType(Integer.class).defaultsTo(1);
         OptionSpec<String> eval = parser.accepts("eval", "Evaluate script")
                 .withRequiredArg().ofType(String.class);
+        OptionSpec quiet = parser.accepts("quiet", "be less chatty");
+        OptionSpec shell = parser.accepts("shell", "run the shell after executing files");
         OptionSpec help = parser.acceptsAll(asList("h", "?", "help"), "show help").forHelp();
         OptionSpec<String> nonOption = parser.nonOptions("console {<path-to-repository> | <mongodb-uri>}");
 
@@ -94,8 +96,26 @@ public class Console {
             store = new SegmentNodeStore(new FileStore(
                     new File(nonOptions.get(0)), 256));
         }
+        
+        
 
-        Console console = new Console(store, System.in, System.out);
+        List<String> scriptArgs = nonOptions.size() > 1 ?
+                nonOptions.subList(1, nonOptions.size()) : Collections.<String>emptyList();
+        GroovyConsole console =
+                new GroovyConsole(ConsoleSession.create(store), scriptArgs, options.has(quiet));
+
+        int code = 0;
+        if(!scriptArgs.isEmpty()){
+            code = console.execute(scriptArgs);
+        }
+
+        if(scriptArgs.isEmpty() || options.has(shell)){
+            code = console.run();
+        }
+
+        System.exit(code);
+
+        /*Console console = new Console(store, System.in, System.out);
         String script = eval.value(options);
         if (script != null) {
             Command evalCommand = new Command.Eval();
@@ -103,7 +123,7 @@ public class Console {
             System.exit(console.run(evalCommand));
         }
 
-        System.exit(console.run());
+        System.exit(console.run());*/
     }
 
     private final InputStream in;

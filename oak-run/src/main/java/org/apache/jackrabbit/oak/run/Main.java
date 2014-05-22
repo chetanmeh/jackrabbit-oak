@@ -123,7 +123,7 @@ public class Main {
         }
     }
 
-    private static void printProductInfo() {
+    public static String getProductInfo(){
         String version = null;
 
         try {
@@ -148,7 +148,11 @@ public class Main {
             product = "Apache Jackrabbit Oak";
         }
 
-        System.out.println(product);
+        return product;
+    }
+
+    private static void printProductInfo() {
+        System.out.println(getProductInfo());
     }
 
     private static void backup(String[] args) throws IOException {
