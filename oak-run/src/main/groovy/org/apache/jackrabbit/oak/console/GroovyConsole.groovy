@@ -168,7 +168,7 @@ class GroovyConsole {
             } else if (groovyshellEnv) {
                 prefix = groovyshellEnv
             }
-            return colored ? "@|bold ${prefix}@|bold >|@ " : "${prefix}>"
+            return colored ? "@|bold,blue ${prefix}>|@ " : "${prefix}>"
         }
 
         private void displayError(final Throwable cause) {
@@ -203,7 +203,7 @@ class GroovyConsole {
         @CompileStatic(TypeCheckingMode.SKIP)
         int run(final String commandLine) {
             Terminal term = TerminalFactory.create()
-
+            colored = term.ansiSupported
             if (log.debug) {
                 log.debug("Terminal ($term)")
                 log.debug("    Supported:  $term.supported")
