@@ -45,13 +45,15 @@ public class LuceneIndexQueryTest extends AbstractQueryTest {
     @Override
     protected void createTestIndexNode() throws Exception {
         Tree index = root.getTree("/");
-        createTestIndexNode(index, LuceneIndexConstants.TYPE_LUCENE);
+        Tree idxTree = createTestIndexNode(index, LuceneIndexConstants.TYPE_LUCENE);
+        idxTree.setProperty(LuceneIndexConstants.FUNC_NAME, "lucene");
+        idxTree.setProperty(LuceneIndexConstants.TEST_MODE_COST, 1e-3);
         root.commit();
     }
 
     @Override
     protected ContentRepository createRepository() {
-        LowCostLuceneIndexProvider provider = new LowCostLuceneIndexProvider();
+        LuceneIndexProvider provider = new LuceneIndexProvider();
         return new Oak().with(new InitialContent())
                 .with(new OpenSecurityProvider())
                 .with((QueryIndexProvider) provider)
@@ -273,7 +275,7 @@ public class LuceneIndexQueryTest extends AbstractQueryTest {
 
     @Test
     public void testRepSimilarAsNativeQuery() throws Exception {
-        String nativeQueryString = "select [jcr:path] from [nt:base] where " + 
+        String nativeQueryString = "select [jcr:path] from [nt:base] where " +
                 "native('lucene', 'mlt?stream.body=/test/a&mlt.fl=:path&mlt.mindf=0&mlt.mintf=0')";
         Tree test = root.getTree("/").addChild("test");
         test.addChild("a").setProperty("text", "Hello World");

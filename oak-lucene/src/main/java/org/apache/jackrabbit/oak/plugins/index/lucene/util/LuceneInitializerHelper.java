@@ -22,6 +22,7 @@ import static org.apache.jackrabbit.oak.plugins.index.lucene.util.LuceneIndexHel
 
 import java.util.Set;
 
+import org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants;
 import org.apache.jackrabbit.oak.spi.lifecycle.RepositoryInitializer;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 
@@ -36,6 +37,8 @@ public class LuceneInitializerHelper implements RepositoryInitializer {
     private final String filePath;
 
     private String async = null;
+
+    private double simulatedCost = -1;
 
     private Boolean storageEnabled;
 
@@ -75,18 +78,29 @@ public class LuceneInitializerHelper implements RepositoryInitializer {
         return this;
     }
 
+    public LuceneInitializerHelper simulatedCost(double simulatedCost) {
+        this.simulatedCost = simulatedCost;
+        return this;
+    }
+
     @Override
     public void initialize(NodeBuilder builder) {
+        NodeBuilder idxBuilder = null;
         if (builder.hasChildNode(INDEX_DEFINITIONS_NAME)
                 && builder.getChildNode(INDEX_DEFINITIONS_NAME).hasChildNode(name)) {
             // do nothing
         } else if (filePath == null) {
-            newLuceneIndexDefinition(builder.child(INDEX_DEFINITIONS_NAME),
+            idxBuilder = newLuceneIndexDefinition(builder.child(INDEX_DEFINITIONS_NAME),
                     name, propertyTypes, excludes, async, storageEnabled);
         } else {
-            newLuceneFileIndexDefinition(
+            idxBuilder = newLuceneFileIndexDefinition(
                     builder.child(INDEX_DEFINITIONS_NAME),
                     name, propertyTypes, excludes, filePath, async);
+        }
+
+        if(idxBuilder != null
+                && simulatedCost > 0){
+            idxBuilder.setProperty(LuceneIndexConstants.TEST_MODE_COST, simulatedCost);
         }
     }
 

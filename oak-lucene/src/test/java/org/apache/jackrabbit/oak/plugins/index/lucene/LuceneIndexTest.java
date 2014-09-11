@@ -80,8 +80,10 @@ public class LuceneIndexTest {
     @Test
     public void testLucene() throws Exception {
         NodeBuilder index = builder.child(INDEX_DEFINITIONS_NAME);
-        newLuceneIndexDefinition(index, "lucene",
+        NodeBuilder defnBuilder = newLuceneIndexDefinition(index, "lucene",
                 ImmutableSet.of(TYPENAME_STRING));
+
+        IndexDefinition defn = new IndexDefinition(defnBuilder, "/oak:index/lucene");
 
         NodeState before = builder.getNodeState();
         builder.setProperty("foo", "bar");
@@ -91,7 +93,7 @@ public class LuceneIndexTest {
 
         IndexTracker tracker = new IndexTracker();
         tracker.update(indexed);
-        QueryIndex queryIndex = new LuceneIndex(tracker, analyzer, null);
+        QueryIndex queryIndex = new LuceneIndex(tracker, defn, analyzer, null);
         FilterImpl filter = createFilter(NT_BASE);
         filter.restrictPath("/", Filter.PathRestriction.EXACT);
         filter.restrictProperty("foo", Operator.EQUAL,
@@ -105,8 +107,10 @@ public class LuceneIndexTest {
     @Test
     public void testLuceneLazyCursor() throws Exception {
         NodeBuilder index = builder.child(INDEX_DEFINITIONS_NAME);
-        newLuceneIndexDefinition(index, "lucene",
+        NodeBuilder defnBuilder = newLuceneIndexDefinition(index, "lucene",
                 ImmutableSet.of(TYPENAME_STRING));
+
+        IndexDefinition defn = new IndexDefinition(defnBuilder, "/oak:index/lucene");
 
         NodeState before = builder.getNodeState();
         builder.setProperty("foo", "bar");
@@ -121,7 +125,7 @@ public class LuceneIndexTest {
 
         IndexTracker tracker = new IndexTracker();
         tracker.update(indexed);
-        QueryIndex queryIndex = new LuceneIndex(tracker, analyzer, null);
+        QueryIndex queryIndex = new LuceneIndex(tracker, defn, analyzer, null);
         FilterImpl filter = createFilter(NT_BASE);
         filter.restrictProperty("foo", Operator.EQUAL,
                 PropertyValues.newString("bar"));
@@ -139,8 +143,10 @@ public class LuceneIndexTest {
     @Test
     public void testLucene2() throws Exception {
         NodeBuilder index = builder.child(INDEX_DEFINITIONS_NAME);
-        newLuceneIndexDefinition(index, "lucene",
+        NodeBuilder defnBuilder = newLuceneIndexDefinition(index, "lucene",
                 ImmutableSet.of(TYPENAME_STRING));
+
+        IndexDefinition defn = new IndexDefinition(defnBuilder, "/oak:index/lucene");
 
         NodeState before = builder.getNodeState();
         builder.setProperty("foo", "bar");
@@ -154,7 +160,7 @@ public class LuceneIndexTest {
 
         IndexTracker tracker = new IndexTracker();
         tracker.update(indexed);
-        QueryIndex queryIndex = new LuceneIndex(tracker, analyzer, null);
+        QueryIndex queryIndex = new LuceneIndex(tracker, defn, analyzer, null);
         FilterImpl filter = createFilter(NT_BASE);
         // filter.restrictPath("/", Filter.PathRestriction.EXACT);
         filter.restrictProperty("foo", Operator.EQUAL,
@@ -172,8 +178,10 @@ public class LuceneIndexTest {
     @Test
     public void testLucene3() throws Exception {
         NodeBuilder index = builder.child(INDEX_DEFINITIONS_NAME);
-        newLuceneIndexDefinition(index, "lucene",
+        NodeBuilder defnBuilder = newLuceneIndexDefinition(index, "lucene",
                 ImmutableSet.of(TYPENAME_STRING));
+
+        IndexDefinition defn = new IndexDefinition(defnBuilder, "/oak:index/lucene");
 
         NodeState before = builder.getNodeState();
         builder.setProperty("foo", "bar");
@@ -188,7 +196,7 @@ public class LuceneIndexTest {
 
         IndexTracker tracker = new IndexTracker();
         tracker.update(indexed);
-        QueryIndex queryIndex = new LuceneIndex(tracker, analyzer, null);
+        QueryIndex queryIndex = new LuceneIndex(tracker, defn, analyzer, null);
         FilterImpl filter = createFilter(NT_BASE);
         // filter.restrictPath("/", Filter.PathRestriction.EXACT);
         filter.restrictProperty("foo", Operator.EQUAL,
@@ -254,6 +262,7 @@ public class LuceneIndexTest {
         idxb.setProperty(PERSISTENCE_NAME, PERSISTENCE_FILE);
         idxb.setProperty(PERSISTENCE_PATH, getIndexDir());
 
+        IndexDefinition defn = new IndexDefinition(idxb, "/oak:index/lucene");
         nodeStore.merge(builder, EmptyHook.INSTANCE, CommitInfo.EMPTY);
 
         builder = nodeStore.getRoot().builder();
@@ -261,17 +270,17 @@ public class LuceneIndexTest {
 
         NodeState indexed = nodeStore.merge(builder, HOOK, CommitInfo.EMPTY);
 
-        assertQuery(tracker, indexed, "foo", "bar");
+        assertQuery(tracker, defn, indexed, "foo", "bar");
 
         builder = nodeStore.getRoot().builder();
         builder.setProperty("foo2", "bar2");
         indexed = nodeStore.merge(builder, HOOK, CommitInfo.EMPTY);
 
-        assertQuery(tracker, indexed, "foo2", "bar2");
+        assertQuery(tracker, defn, indexed, "foo2", "bar2");
     }
 
-    private void assertQuery(IndexTracker tracker, NodeState indexed, String key, String value){
-        QueryIndex queryIndex = new LuceneIndex(tracker, analyzer, null);
+    private void assertQuery(IndexTracker tracker, IndexDefinition defn, NodeState indexed, String key, String value){
+        QueryIndex queryIndex = new LuceneIndex(tracker, defn, analyzer, null);
         FilterImpl filter = createFilter(NT_BASE);
         filter.restrictPath("/", Filter.PathRestriction.EXACT);
         filter.restrictProperty(key, Operator.EQUAL,
@@ -287,4 +296,7 @@ public class LuceneIndexTest {
         return dir.getAbsolutePath();
     }
 
+
+    //TODO Test for Sorting
+    //TODO Test for path restrictions
 }
