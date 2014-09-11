@@ -16,9 +16,6 @@
  */
 package org.apache.jackrabbit.oak.plugins.index.lucene;
 
-import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.EXCLUDE_PROPERTY_NAMES;
-import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.EXPERIMENTAL_STORAGE;
-import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.INCLUDE_PROPERTY_TYPES;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.INDEX_DATA_CHILD_NAME;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.PERSISTENCE_PATH;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.VERSION;
@@ -27,12 +24,8 @@ import static org.apache.lucene.store.NoLockFactory.getNoLockFactory;
 import java.io.File;
 import java.io.IOException;
 import java.util.Calendar;
-import java.util.Set;
-
-import javax.jcr.PropertyType;
 
 import org.apache.jackrabbit.oak.api.CommitFailedException;
-import org.apache.jackrabbit.oak.api.PropertyState;
 import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.plugins.index.IndexUpdateCallback;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
@@ -48,8 +41,6 @@ import org.apache.tika.parser.Parser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.common.collect.ImmutableSet;
-
 public class LuceneIndexEditorContext {
 
     private static final Logger log = LoggerFactory
@@ -63,6 +54,7 @@ public class LuceneIndexEditorContext {
         try {
             IndexWriterConfig config = new IndexWriterConfig(VERSION, analyzer);
             config.setMergeScheduler(new SerialMergeScheduler());
+            //TODO Use default codec for index where full text index is not stored
             config.setCodec(new OakCodec());
             return config;
         } finally {
@@ -98,56 +90,30 @@ public class LuceneIndexEditorContext {
 
     private static final Parser parser = new AutoDetectParser();
 
-    private final NodeBuilder definition;
-
     private IndexWriter writer = null;
-
-    private final int propertyTypes;
-
-    private final Set<String> excludes;
 
     private long indexedNodes;
 
-    private boolean storageEnabled = true;
-
     private final IndexUpdateCallback updateCallback;
 
-    LuceneIndexEditorContext(NodeBuilder definition, Analyzer analyzer, IndexUpdateCallback updateCallback) {
-        this.definition = definition;
-        this.config = getIndexWriterConfig(analyzer);
+    private final IndexDefinition definition;
+    
+    private final NodeBuilder definitionBuilder;
 
-        PropertyState pst = definition.getProperty(INCLUDE_PROPERTY_TYPES);
-        if (pst != null) {
-            int types = 0;
-            for (String inc : pst.getValue(Type.STRINGS)) {
-                try {
-                    types |= 1 << PropertyType.valueFromName(inc);
-                } catch (IllegalArgumentException e) {
-                    log.warn("Unknown property type: " + inc);
-                }
-            }
-            this.propertyTypes = types;
-        } else {
-            this.propertyTypes = -1;
-        }
-        PropertyState pse = definition.getProperty(EXCLUDE_PROPERTY_NAMES);
-        if (pse != null) {
-            excludes = ImmutableSet.copyOf(pse.getValue(Type.STRINGS));
-        } else {
-            excludes = ImmutableSet.of();
-        }
-        PropertyState storage = definition.getProperty(EXPERIMENTAL_STORAGE);
-        storageEnabled = storage == null || storage.getValue(Type.BOOLEAN);
+    LuceneIndexEditorContext(NodeBuilder definition, Analyzer analyzer, IndexUpdateCallback updateCallback) {
+        this.definitionBuilder = definition;
+        this.definition = new IndexDefinition(definition);
+        this.config = getIndexWriterConfig(analyzer);
         this.indexedNodes = 0;
         this.updateCallback = updateCallback;
     }
 
     int getPropertyTypes() {
-        return propertyTypes;
+        return definition.getPropertyTypes();
     }
 
     boolean includeProperty(String name) {
-        return !excludes.contains(name);
+        return definition.includeProperty(name);
     }
 
     Parser getParser() {
@@ -156,7 +122,7 @@ public class LuceneIndexEditorContext {
 
     IndexWriter getWriter() throws IOException {
         if (writer == null) {
-            writer = new IndexWriter(newIndexDirectory(definition), config);
+            writer = new IndexWriter(newIndexDirectory(definition.getDefinition()), config);
         }
         return writer;
     }
@@ -171,9 +137,9 @@ public class LuceneIndexEditorContext {
             //OAK-2029 Record the last updated status so
             //as to make IndexTracker detect changes when index
             //is stored in file system
-            NodeBuilder status = definition.child(":status");
+            NodeBuilder status = definitionBuilder.child(":status");
             status.setProperty("lastUpdated", ISO8601.format(Calendar.getInstance()), Type.DATE);
-            status.setProperty("indexedNodes",indexedNodes);
+            status.setProperty("indexedNodes", indexedNodes);
         }
     }
 
@@ -195,7 +161,18 @@ public class LuceneIndexEditorContext {
      * 
      */
     public boolean isStored(String name) {
-        return storageEnabled;
+        return definition.isStored(name);
     }
 
+    public boolean isFullTextEnabled() {
+        return definition.isFullTextEnabled();
+    }
+
+    public boolean skipTokenization(String propertyName){
+        return definition.skipTokenization(propertyName);
+    }
+
+    public IndexDefinition getDefinition() {
+        return definition;
+    }
 }

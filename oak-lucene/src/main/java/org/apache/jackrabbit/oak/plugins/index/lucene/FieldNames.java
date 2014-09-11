@@ -38,6 +38,12 @@ public final class FieldNames {
     public static final String PATH = ":path";
 
     /**
+     * Name of the field that contains the name of the node.
+     */
+    public static final String NAME = ":name";
+
+
+    /**
      * Name of the field that contains the fulltext index.
      */
     public static final String FULLTEXT = ":fulltext";
