@@ -21,6 +21,7 @@ import java.util.List;
 
 import javax.annotation.Nonnull;
 
+import com.google.common.collect.Lists;
 import org.apache.jackrabbit.oak.plugins.index.aggregate.NodeAggregator;
 import org.apache.jackrabbit.oak.spi.commit.CommitInfo;
 import org.apache.jackrabbit.oak.spi.commit.Observer;
@@ -29,7 +30,6 @@ import org.apache.jackrabbit.oak.spi.query.QueryIndexProvider;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.lucene.analysis.Analyzer;
 
-import com.google.common.collect.ImmutableList;
 
 /**
  * A provider for Lucene indexes.
@@ -59,11 +59,15 @@ public class LuceneIndexProvider implements QueryIndexProvider, Observer, Closea
 
     @Override @Nonnull
     public List<QueryIndex> getQueryIndexes(NodeState nodeState) {
-        return ImmutableList.<QueryIndex> of(newLuceneIndex());
+        List<QueryIndex> indexes = Lists.newArrayListWithCapacity(tracker.getDefinitionCount());
+        for(IndexDefinition defn : tracker.getDefinitions()){
+            indexes.add(newLuceneIndex(defn));
+        }
+        return indexes;
     }
 
-    protected LuceneIndex newLuceneIndex() {
-        return new LuceneIndex(tracker, analyzer, aggregator);
+    protected LuceneIndex newLuceneIndex(IndexDefinition definition) {
+        return new LuceneIndex(tracker, definition, analyzer, aggregator);
     }
 
     /**

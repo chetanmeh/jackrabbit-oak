@@ -19,6 +19,7 @@ package org.apache.jackrabbit.oak.plugins.index.lucene;
 import static com.google.common.base.Preconditions.checkState;
 import static org.apache.jackrabbit.JcrConstants.JCR_MIXINTYPES;
 import static org.apache.jackrabbit.JcrConstants.JCR_PRIMARYTYPE;
+import static org.apache.jackrabbit.oak.api.Type.LONG;
 import static org.apache.jackrabbit.oak.api.Type.STRING;
 import static org.apache.jackrabbit.oak.commons.PathUtils.denotesRoot;
 import static org.apache.jackrabbit.oak.commons.PathUtils.getAncestorPath;
@@ -26,13 +27,11 @@ import static org.apache.jackrabbit.oak.commons.PathUtils.getDepth;
 import static org.apache.jackrabbit.oak.commons.PathUtils.getName;
 import static org.apache.jackrabbit.oak.commons.PathUtils.getParentPath;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.FieldNames.PATH;
-import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.EXCLUDE_PROPERTY_NAMES;
-import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.INCLUDE_PROPERTY_TYPES;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstants.VERSION;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.TermFactory.newFulltextTerm;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.TermFactory.newPathTerm;
-import static org.apache.jackrabbit.oak.plugins.index.lucene.util.LuceneIndexHelper.skipTokenization;
 import static org.apache.jackrabbit.oak.query.QueryImpl.JCR_PATH;
+import static org.apache.lucene.search.BooleanClause.Occur;
 import static org.apache.lucene.search.BooleanClause.Occur.MUST;
 import static org.apache.lucene.search.BooleanClause.Occur.MUST_NOT;
 import static org.apache.lucene.search.BooleanClause.Occur.SHOULD;
@@ -49,6 +48,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import javax.annotation.CheckForNull;
 import javax.jcr.PropertyType;
 
 import com.google.common.collect.AbstractIterator;
@@ -56,6 +56,7 @@ import com.google.common.collect.Queues;
 import com.google.common.collect.Sets;
 
 import org.apache.jackrabbit.oak.api.PropertyValue;
+import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.plugins.index.aggregate.NodeAggregator;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.MoreLikeThisHelper;
 import org.apache.jackrabbit.oak.query.QueryEngineSettings;
@@ -92,10 +93,13 @@ import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.MultiPhraseQuery;
+import org.apache.lucene.search.NumericRangeQuery;
 import org.apache.lucene.search.PhraseQuery;
 import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.TopDocs;
@@ -145,11 +149,11 @@ import org.slf4j.LoggerFactory;
  * @see QueryIndex
  *
  */
-public class LuceneIndex implements FulltextQueryIndex {
+public class LuceneIndex implements FulltextQueryIndex, QueryIndex.AdvancedQueryIndex {
 
     private static final Logger LOG = LoggerFactory
             .getLogger(LuceneIndex.class);
-    public static final String NATIVE_QUERY_FUNCTION = "native*lucene";
+    public static final String NATIVE_QUERY_FUNCTION1 = "native*lucene";
 
     /**
      * Batch size for fetching results from Lucene queries.
@@ -158,111 +162,39 @@ public class LuceneIndex implements FulltextQueryIndex {
 
     private final IndexTracker tracker;
 
+    private final IndexDefinition definition;
+
     private final Analyzer analyzer;
 
     private final NodeAggregator aggregator;
 
     public LuceneIndex(
-            IndexTracker tracker, Analyzer analyzer,
+            IndexTracker tracker, IndexDefinition definition, Analyzer analyzer,
             NodeAggregator aggregator) {
         this.tracker = tracker;
+        this.definition = definition;
         this.analyzer = analyzer;
         this.aggregator = aggregator;
     }
 
     @Override
     public String getIndexName() {
-        return "lucene";
+        return definition.getName();
+    }
+
+    //~----------------------------------------------< AdvanceQueryIndex >
+
+    @Override
+    public List<IndexPlan> getPlans(Filter filter, List<OrderEntry> sortOrder, NodeState rootState) {
+        return new IndexPlanner(tracker, definition, filter, sortOrder).getPlans();
     }
 
     @Override
-    public double getCost(Filter filter, NodeState root) {
-        FullTextExpression ft = filter.getFullTextConstraint();
-        if (ft == null) {
-            // no full-text condition: don't use this index,
-            // as there might be a better one
-            return Double.POSITIVE_INFINITY;
-        }
-
-        IndexNode index = tracker.acquireIndexNode("/");
-        if (index == null) { // unusable index
-            return Double.POSITIVE_INFINITY;
-        }
-        try {
-            Set<String> relPaths = getRelativePaths(ft);
-            if (relPaths.size() > 1) {
-                LOG.warn("More than one relative parent for query " + filter.getQueryStatement());
-                // there are multiple "parents", as in
-                // "contains(a/x, 'hello') and contains(b/x, 'world')"
-                return new MultiLuceneIndex(filter, root, relPaths).getCost();
-            }
-            String parent = relPaths.iterator().next();
-            if (parent.isEmpty()) {
-                // no relative properties
-                return 10;
-            }
-            // all relative properties have the same "parent", as in
-            // "contains(a/x, 'hello') and contains(a/y, 'world')" or
-            // "contains(a/x, 'hello') or contains(a/*, 'world')"
-            // TODO: proper cost calculation
-            // we assume this will cause more read operations,
-            // as we need to read the node and then the parent
-            return 15;
-        } finally {
-            index.release();
-        }
-    }
-
-    /**
-     * Get the set of relative paths of a full-text condition. For example, for
-     * the condition "contains(a/b, 'hello') and contains(c/d, 'world'), the set
-     * { "a", "c" } is returned. If there are no relative properties, then one
-     * entry is returned (the empty string). If there is no expression, then an
-     * empty set is returned.
-     *
-     * @param ft the full-text expression
-     * @return the set of relative paths (possibly empty)
-     */
-    private static Set<String> getRelativePaths(FullTextExpression ft) {
-        if (ft == null) {
-            // there might be no full-text constraint when using the
-            // LowCostLuceneIndexProvider which is used for testing
-            // TODO if the LowCostLuceneIndexProvider is removed, we should do
-            // the following instead:
-
-            // throw new
-            // IllegalStateException("Lucene index is used even when no full-text conditions are used for filter "
-            // + filter);
-
-            return Collections.emptySet();
-        }
-        final HashSet<String> relPaths = new HashSet<String>();
-        ft.accept(new FullTextVisitor.FullTextVisitorBase() {
-
-            @Override
-            public boolean visit(FullTextTerm term) {
-                String p = term.getPropertyName();
-                if (p == null) {
-                    relPaths.add("");
-                } else if (p.startsWith("../") || p.startsWith("./")) {
-                    throw new IllegalArgumentException("Relative parent is not supported:" + p);
-                } else if (getDepth(p) > 1) {
-                    String parent = getParentPath(p);
-                    relPaths.add(parent);
-                } else {
-                    relPaths.add("");
-                }
-                return true;
-            }
-        });
-        return relPaths;
-    }
-
-    @Override
-    public String getPlan(Filter filter, NodeState root) {
-        IndexNode index = tracker.acquireIndexNode("/");
+    public String getPlanDescription(IndexPlan plan, NodeState root) {
+        IndexNode index = acquireIndexNode();
         checkState(index != null, "The Lucene index is not available");
         try {
+            Filter filter = plan.getFilter();
             FullTextExpression ft = filter.getFullTextConstraint();
             Set<String> relPaths = getRelativePaths(ft);
             if (relPaths.size() > 1) {
@@ -272,18 +204,58 @@ public class LuceneIndex implements FulltextQueryIndex {
             // we only restrict non-full-text conditions if there is
             // no relative property in the full-text constraint
             boolean nonFullTextConstraints = parent.isEmpty();
-            String plan = getQuery(filter, null, nonFullTextConstraints, analyzer, index.getDefinition()) + " ft:(" + ft + ")";
-            if (!parent.isEmpty()) {
-                plan += " parent:" + parent;
+            StringBuilder sb = new StringBuilder("lucene:");
+            sb.append(definition.getName())
+                    .append("(")
+                    .append(definition.getDefinitionPath())
+                    .append(") ");
+            sb.append(getQuery(filter, null, nonFullTextConstraints, analyzer, definition));
+            if(plan.getSortOrder() != null && !plan.getSortOrder().isEmpty()){
+                sb.append(" ordering:").append(plan.getSortOrder());
             }
-            return plan;
+            if (ft != null) {
+                sb.append(" ft:(").append(ft).append(")");
+            }
+            if (!parent.isEmpty()) {
+                sb.append(" parent:").append(parent);
+            }
+            return sb.toString();
         } finally {
             index.release();
         }
     }
 
     @Override
+    public Cursor query(IndexPlan plan, NodeState root) {
+        final Filter filter = plan.getFilter();
+        final Sort sort = getSort(plan.getSortOrder());
+        return query(filter, sort, root);
+    }
+
+    /**
+     * Though AdvanceQueryIndex is implemented need to implement
+     * older methods also for AggregateIndex to work
+     */
+    @Override
     public Cursor query(final Filter filter, final NodeState root) {
+        return query(filter, null, root);
+    }
+
+    @Override
+    public double getCost(Filter filter, NodeState root) {
+        throw new UnsupportedOperationException("Not supported as implementing AdvancedQueryIndex");
+    }
+
+    @Override
+    public String getPlan(Filter filter, NodeState root) {
+        List<IndexPlan> plans = getPlans(filter, Collections.<OrderEntry>emptyList(), root);
+        if(!plans.isEmpty()){
+            return getPlanDescription(plans.get(0), root);
+        }
+        return "N/A";
+    }
+
+    private Cursor query(final Filter filter, final Sort sort, NodeState root) {
         FullTextExpression ft = filter.getFullTextConstraint();
         Set<String> relPaths = getRelativePaths(ft);
         if (relPaths.size() > 1) {
@@ -311,6 +283,8 @@ public class LuceneIndex implements FulltextQueryIndex {
 
             private LuceneResultRow convertToRow(ScoreDoc doc, IndexSearcher searcher) throws IOException {
                 IndexReader reader = searcher.getIndexReader();
+                //TODO Look into usage of field cache for retrieving the path
+                //instead of reading via reader if no of docs in index are limited
                 PathStoredFieldVisitor visitor = new PathStoredFieldVisitor();
                 reader.document(doc.doc, visitor);
                 String path = visitor.getPath();
@@ -346,17 +320,26 @@ public class LuceneIndex implements FulltextQueryIndex {
             private boolean loadDocs() {
                 ScoreDoc lastDocToRecord = null;
 
-                IndexNode indexNode = tracker.acquireIndexNode("/");
+                IndexNode indexNode = acquireIndexNode();
                 checkState(indexNode != null);
                 try {
                     IndexSearcher searcher = indexNode.getSearcher();
                     Query query = getQuery(filter, searcher.getIndexReader(),
-                            nonFullTextConstraints, analyzer, indexNode.getDefinition());
+                            nonFullTextConstraints, analyzer, definition);
                     TopDocs docs;
+                    //TODO Support for sorting
                     if (lastDoc != null) {
-                        docs = searcher.searchAfter(lastDoc, query, LUCENE_QUERY_BATCH_SIZE);
+                        if(sort == null) {
+                            docs = searcher.searchAfter(lastDoc, query, LUCENE_QUERY_BATCH_SIZE);
+                        } else {
+                            docs = searcher.searchAfter(lastDoc, query, LUCENE_QUERY_BATCH_SIZE, sort);
+                        }
                     } else {
-                        docs = searcher.search(query, LUCENE_QUERY_BATCH_SIZE);
+                        if (sort == null) {
+                            docs = searcher.search(query, LUCENE_QUERY_BATCH_SIZE);
+                        } else {
+                            docs = searcher.search(query, LUCENE_QUERY_BATCH_SIZE, sort);
+                        }
                     }
 
                     for (ScoreDoc doc : docs.scoreDocs) {
@@ -382,6 +365,86 @@ public class LuceneIndex implements FulltextQueryIndex {
         return new LucenePathCursor(itr, settings);
     }
 
+    private IndexNode acquireIndexNode() {
+        return tracker.acquireIndexNode(definition.getDefinitionPath());
+    }
+
+
+    /**
+     * Get the set of relative paths of a full-text condition. For example, for
+     * the condition "contains(a/b, 'hello') and contains(c/d, 'world'), the set
+     * { "a", "c" } is returned. If there are no relative properties, then one
+     * entry is returned (the empty string). If there is no expression, then an
+     * empty set is returned.
+     *
+     * @param ft the full-text expression
+     * @return the set of relative paths (possibly empty)
+     */
+    static Set<String> getRelativePaths(FullTextExpression ft) {
+        if (ft == null) {
+            // there might be no full-text constraint when using the
+            // LowCostLuceneIndexProvider which is used for testing
+            // TODO if the LowCostLuceneIndexProvider is removed, we should do
+            // the following instead:
+
+            // throw new
+            // IllegalStateException("Lucene index is used even when no full-text conditions are used for filter "
+            // + filter);
+
+            return Collections.emptySet();
+        }
+        final HashSet<String> relPaths = new HashSet<String>();
+        ft.accept(new FullTextVisitor.FullTextVisitorBase() {
+
+            @Override
+            public boolean visit(FullTextTerm term) {
+                String p = term.getPropertyName();
+                if (p == null) {
+                    relPaths.add("");
+                } else if (p.startsWith("../") || p.startsWith("./")) {
+                    throw new IllegalArgumentException("Relative parent is not supported:" + p);
+                } else if (getDepth(p) > 1) {
+                    String parent = getParentPath(p);
+                    relPaths.add(parent);
+                } else {
+                    relPaths.add("");
+                }
+                return true;
+            }
+        });
+        return relPaths;
+    }
+
+    private static Sort getSort(List<OrderEntry> sortOrder) {
+        if (sortOrder == null || sortOrder.isEmpty()) {
+            return null;
+        }
+        SortField[] fields = new SortField[sortOrder.size()];
+        for (int i = 0; i < sortOrder.size(); i++) {
+            OrderEntry oe = sortOrder.get(i);
+            boolean reverse = oe.getOrder() == OrderEntry.Order.ASCENDING ? false : true;
+            fields[i] = new SortField(oe.getPropertyName(), toLuceneSortType(oe.getPropertyType()), reverse);
+        }
+        return new Sort(fields);
+    }
+
+    private static SortField.Type toLuceneSortType(Type<?> t) {
+        checkState(t != null, "Type cannot be null");
+        checkState(!t.isArray(), "Array types are not supported");
+
+        switch (t.tag()) {
+            case PropertyType.LONG:
+            case PropertyType.DATE:
+                return SortField.Type.LONG;
+            case PropertyType.DOUBLE:
+                return SortField.Type.DOUBLE;
+            default:
+                //TODO Check about SortField.Type.STRING_VAL
+                return SortField.Type.STRING;
+        }
+    }
+
+
     /**
      * Get the Lucene query for the given filter.
      *
@@ -395,7 +458,7 @@ public class LuceneIndex implements FulltextQueryIndex {
      * @return the Lucene query
      */
     private static Query getQuery(Filter filter, IndexReader reader,
-            boolean nonFullTextConstraints, Analyzer analyzer, NodeState indexDefinition) {
+            boolean nonFullTextConstraints, Analyzer analyzer, IndexDefinition indexDefinition) {
         List<Query> qs = new ArrayList<Query>();
         FullTextExpression ft = filter.getFullTextConstraint();
         if (ft == null) {
@@ -405,7 +468,7 @@ public class LuceneIndex implements FulltextQueryIndex {
         } else {
             qs.add(getFullTextQuery(ft, analyzer, reader));
         }
-        PropertyRestriction pr = filter.getPropertyRestriction(NATIVE_QUERY_FUNCTION);
+        PropertyRestriction pr = filter.getPropertyRestriction(getNativeFunctionName(indexDefinition));
         if (pr != null) {
             String query = String.valueOf(pr.first.getValue(pr.first.getType()));
             QueryParser queryParser = new QueryParser(VERSION, "", analyzer);
@@ -430,6 +493,7 @@ public class LuceneIndex implements FulltextQueryIndex {
                     indexDefinition);
         }
         if (qs.size() == 0) {
+            //TODO Revisit this might be costly
             return new MatchAllDocsQuery();
         }
         if (qs.size() == 1) {
@@ -442,8 +506,12 @@ public class LuceneIndex implements FulltextQueryIndex {
         return bq;
     }
 
+    static String getNativeFunctionName(IndexDefinition defn) {
+        return "native*" + defn.getFunctionName();
+    }
+
     private static void addNonFullTextConstraints(List<Query> qs,
-            Filter filter, IndexReader reader, Analyzer analyzer, NodeState indexDefinition) {
+            Filter filter, IndexReader reader, Analyzer analyzer, IndexDefinition indexDefinition) {
         if (!filter.matchesAllTypes()) {
             addNodeTypeConstraints(qs, filter);
         }
@@ -484,9 +552,21 @@ public class LuceneIndex implements FulltextQueryIndex {
 
         for (PropertyRestriction pr : filter.getPropertyRestrictions()) {
 
-            if (pr.first == null && pr.last == null) {
+            if (pr.first == null && pr.last == null && pr.list == null) {
                 // ignore property existence checks, Lucene can't to 'property
                 // is not null' queries (OAK-1208)
+
+                //TODO May be this can be relaxed if we have an index which
+                //maintains the list of propertyName present in a node say
+                //against :propNames. Only configured set of properties would
+                //be
+
+                //TODO Support for or clause i.e. pr.list
+
+                //TODO Currently the propertyRestrictions are not in order i.e. FilterImpl
+                //maintains the restrictions in a hashmap. Having an order might help where
+                //first boolean clause should restrict the result set size for subsequent
+                //evaluation
                 continue;
             }
 
@@ -503,9 +583,12 @@ public class LuceneIndex implements FulltextQueryIndex {
                 continue;
             }
 
-            if (skipTokenization(name)) {
-                qs.add(new TermQuery(new Term(name, pr.first
-                        .getValue(STRING))));
+            if (indexDefinition.skipTokenization(name)
+                    && indexDefinition.includeProperty(pr.propertyName)) {
+                Query q = createQuery(pr, indexDefinition);
+                if(q != null) {
+                    qs.add(q);
+                }
                 continue;
             }
 
@@ -524,28 +607,7 @@ public class LuceneIndex implements FulltextQueryIndex {
             }
 
             if (isLike) {
-                first = first.replace('%', WildcardQuery.WILDCARD_STRING);
-                first = first.replace('_', WildcardQuery.WILDCARD_CHAR);
-
-                int indexOfWS = first.indexOf(WildcardQuery.WILDCARD_STRING);
-                int indexOfWC = first.indexOf(WildcardQuery.WILDCARD_CHAR);
-                int len = first.length();
-
-                if (indexOfWS == len || indexOfWC == len) {
-                    // remove trailing "*" for prefixquery
-                    first = first.substring(0, first.length() - 1);
-                    if (JCR_PATH.equals(name)) {
-                        qs.add(new PrefixQuery(newPathTerm(first)));
-                    } else {
-                        qs.add(new PrefixQuery(new Term(name, first)));
-                    }
-                } else {
-                    if (JCR_PATH.equals(name)) {
-                        qs.add(new WildcardQuery(newPathTerm(first)));
-                    } else {
-                        qs.add(new WildcardQuery(new Term(name, first)));
-                    }
-                }
+                qs.add(createLikeQuery(name, first));
                 continue;
             }
 
@@ -572,6 +634,152 @@ public class LuceneIndex implements FulltextQueryIndex {
         }
     }
 
+    private static Query createLikeQuery(String name, String first) {
+        first = first.replace('%', WildcardQuery.WILDCARD_STRING);
+        first = first.replace('_', WildcardQuery.WILDCARD_CHAR);
+
+        int indexOfWS = first.indexOf(WildcardQuery.WILDCARD_STRING);
+        int indexOfWC = first.indexOf(WildcardQuery.WILDCARD_CHAR);
+        int len = first.length();
+
+        if (indexOfWS == len || indexOfWC == len) {
+            // remove trailing "*" for prefixquery
+            first = first.substring(0, first.length() - 1);
+            if (JCR_PATH.equals(name)) {
+                return new PrefixQuery(newPathTerm(first));
+            } else {
+                return new PrefixQuery(new Term(name, first));
+            }
+        } else {
+            if (JCR_PATH.equals(name)) {
+                return new WildcardQuery(newPathTerm(first));
+            } else {
+                return new WildcardQuery(new Term(name, first));
+            }
+        }
+    }
+
+    @CheckForNull
+    private static Query createQuery(PropertyRestriction pr,
+                                     IndexDefinition defn) {
+        int propType = pr.propertyType;
+        if (defn.hasPropertyDefinition(pr.propertyName)) {
+            propType = defn.getPropDefn(pr.propertyName).getPropertyType();
+        }
+        switch (propType) {
+            case PropertyType.DATE: {
+                Long first = pr.first != null ? FieldFactory.dateToLong(pr.first.getValue(Type.DATE)) : null;
+                Long last = pr.last != null ? FieldFactory.dateToLong(pr.last.getValue(Type.DATE)) : null;
+                if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
+                        && pr.lastIncluding) {
+                    // [property]=[value]
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, first, true, true);
+                } else if (pr.first != null && pr.last != null) {
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, last,
+                            pr.firstIncluding, pr.lastIncluding);
+                } else if (pr.first != null && pr.last == null) {
+                    // '>' & '>=' use cases
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, null, pr.firstIncluding, true);
+                } else if (pr.last != null && !pr.last.equals(pr.first)) {
+                    // '<' & '<='
+                    return NumericRangeQuery.newLongRange(pr.propertyName, null, last, true, pr.lastIncluding);
+                } else if (pr.list != null) {
+                    BooleanQuery in = new BooleanQuery();
+                    for (PropertyValue value : pr.list) {
+                        Long dateVal = FieldFactory.dateToLong(value.getValue(Type.DATE));
+                        in.add(NumericRangeQuery.newLongRange(pr.propertyName, dateVal, dateVal, true, true), Occur.SHOULD);
+                    }
+                    return in;
+                }
+
+                break;
+            }
+            case PropertyType.DOUBLE: {
+                Double first = pr.first != null ? pr.first.getValue(Type.DOUBLE) : null;
+                Double last = pr.last != null ? pr.last.getValue(Type.DOUBLE) : null;
+                if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
+                        && pr.lastIncluding) {
+                    // [property]=[value]
+                    return NumericRangeQuery.newDoubleRange(pr.propertyName, first, first, true, true);
+                } else if (pr.first != null && pr.last != null) {
+                    return NumericRangeQuery.newDoubleRange(pr.propertyName, first, last,
+                            pr.firstIncluding, pr.lastIncluding);
+                } else if (pr.first != null && pr.last == null) {
+                    // '>' & '>=' use cases
+                    return NumericRangeQuery.newDoubleRange(pr.propertyName, first, null, pr.firstIncluding, true);
+                } else if (pr.last != null && !pr.last.equals(pr.first)) {
+                    // '<' & '<='
+                    return NumericRangeQuery.newDoubleRange(pr.propertyName, null, last, true, pr.lastIncluding);
+                } else if (pr.list != null) {
+                    BooleanQuery in = new BooleanQuery();
+                    for (PropertyValue value : pr.list) {
+                        Double doubleVal = value.getValue(Type.DOUBLE);
+                        in.add(NumericRangeQuery.newDoubleRange(pr.propertyName, doubleVal, doubleVal, true, true), Occur.SHOULD);
+                    }
+                    return in;
+                }
+                break;
+            }
+            case PropertyType.LONG: {
+                Long first = pr.first != null ? pr.first.getValue(LONG) : null;
+                Long last = pr.last != null ? pr.last.getValue(LONG) : null;
+                if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
+                        && pr.lastIncluding) {
+                    // [property]=[value]
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, first, true, true);
+                } else if (pr.first != null && pr.last != null) {
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, last,
+                            pr.firstIncluding, pr.lastIncluding);
+                } else if (pr.first != null && pr.last == null) {
+                    // '>' & '>=' use cases
+                    return NumericRangeQuery.newLongRange(pr.propertyName, first, null, pr.firstIncluding, true);
+                } else if (pr.last != null && !pr.last.equals(pr.first)) {
+                    // '<' & '<='
+                    return NumericRangeQuery.newLongRange(pr.propertyName, null, last, true, pr.lastIncluding);
+                } else if (pr.list != null) {
+                    BooleanQuery in = new BooleanQuery();
+                    for (PropertyValue value : pr.list) {
+                        Long longVal = value.getValue(LONG);
+                        in.add(NumericRangeQuery.newLongRange(pr.propertyName, longVal, longVal, true, true), Occur.SHOULD);
+                    }
+                    return in;
+                }
+                break;
+            }
+            default: {
+                if (pr.isLike) {
+                    return createLikeQuery(pr.propertyName, pr.first.getValue(STRING));
+                }
+
+                //TODO Confirm that all other types can be treated as string
+                String first = pr.first != null ? pr.first.getValue(STRING) : null;
+                String last = pr.last != null ? pr.last.getValue(STRING) : null;
+                if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
+                        && pr.lastIncluding) {
+                    // [property]=[value]
+                    return new TermQuery(new Term(pr.propertyName, first));
+                } else if (pr.first != null && pr.last != null) {
+                    return TermRangeQuery.newStringRange(pr.propertyName, first, last,
+                            pr.firstIncluding, pr.lastIncluding);
+                } else if (pr.first != null && pr.last == null) {
+                    // '>' & '>=' use cases
+                    return TermRangeQuery.newStringRange(pr.propertyName, first, null, pr.firstIncluding, true);
+                } else if (pr.last != null && !pr.last.equals(pr.first)) {
+                    // '<' & '<='
+                    return TermRangeQuery.newStringRange(pr.propertyName, null, last, true, pr.lastIncluding);
+                } else if (pr.list != null) {
+                    BooleanQuery in = new BooleanQuery();
+                    for (PropertyValue value : pr.list) {
+                        String strVal = value.getValue(STRING);
+                        in.add(new TermQuery(new Term(pr.propertyName, strVal)), Occur.SHOULD);
+                    }
+                    return in;
+                }
+            }
+        }
+        throw new IllegalStateException("PropertyRestriction not handled " + pr + " for index " + defn );
+    }
+
     private static String tokenizeAndPoll(String token, Analyzer analyzer){
         if (token != null) {
             List<String> tokens = tokenize(token, analyzer);
@@ -583,18 +791,16 @@ public class LuceneIndex implements FulltextQueryIndex {
     }
 
     private static boolean isExcludedProperty(PropertyRestriction pr,
-            NodeState definition) {
+                                              IndexDefinition definition) {
         String name = pr.propertyName;
         if (name.contains("/")) {
             // lucene cannot handle child-level property restrictions
             return true;
         }
 
-        // check name
-        for (String e : definition.getStrings(EXCLUDE_PROPERTY_NAMES)) {
-            if (e.equalsIgnoreCase(name)) {
-                return true;
-            }
+        // check
+        if(!definition.includeProperty(name)){
+            return true;
         }
 
         // check type
@@ -607,12 +813,7 @@ public class LuceneIndex implements FulltextQueryIndex {
             type = pr.list.get(0).getType().tag();
         }
         if (type != null) {
-            boolean isIn = false;
-            for (String e : definition.getStrings(INCLUDE_PROPERTY_TYPES)) {
-                if (PropertyType.valueFromName(e) == type) {
-                    isIn = true;
-                }
-            }
+            boolean isIn = definition.includePropertyType(type);
             if (!isIn) {
                 return true;
             }
@@ -639,6 +840,7 @@ public class LuceneIndex implements FulltextQueryIndex {
 
     private static void addNodeTypeConstraints(List<Query> qs, Filter filter) {
         BooleanQuery bq = new BooleanQuery();
+        //TODO These condition should only be added if those propertyTypes are indexed
         for (String type : filter.getPrimaryTypes()) {
             bq.add(new TermQuery(new Term(JCR_PRIMARYTYPE, type)), SHOULD);
         }
@@ -881,7 +1083,7 @@ public class LuceneIndex implements FulltextQueryIndex {
     public NodeAggregator getNodeAggregator() {
         return aggregator;
     }
-    
+
     static class LuceneResultRow {
         final String path;
         final double score;
