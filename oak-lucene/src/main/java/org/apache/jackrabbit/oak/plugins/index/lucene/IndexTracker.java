@@ -20,7 +20,6 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Predicates.in;
 import static com.google.common.base.Predicates.not;
 import static com.google.common.base.Predicates.notNull;
-import static com.google.common.collect.Lists.newArrayList;
 import static com.google.common.collect.Lists.newArrayListWithCapacity;
 import static com.google.common.collect.Maps.filterKeys;
 import static com.google.common.collect.Maps.filterValues;
@@ -32,17 +31,20 @@ import static org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexConstant
 import static org.apache.jackrabbit.oak.plugins.memory.EmptyNodeState.EMPTY_NODE;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import javax.annotation.CheckForNull;
+
+import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.spi.commit.CompositeEditor;
 import org.apache.jackrabbit.oak.spi.commit.DefaultEditor;
 import org.apache.jackrabbit.oak.spi.commit.Editor;
 import org.apache.jackrabbit.oak.spi.commit.EditorDiff;
 import org.apache.jackrabbit.oak.spi.commit.SubtreeEditor;
-import org.apache.jackrabbit.oak.spi.state.ChildNodeEntry;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +62,8 @@ class IndexTracker {
 
     private volatile Map<String, IndexNode> indices = emptyMap();
 
+    private volatile Map<String, IndexDefinition> definitions = emptyMap();
+
     synchronized void close() {
         Map<String, IndexNode> indices = this.indices;
         this.indices = emptyMap();
@@ -75,17 +79,18 @@ class IndexTracker {
 
     synchronized void update(NodeState root) {
         Map<String, IndexNode> original = indices;
+        Map<String, IndexDefinition> originalDefns = definitions;
         final Map<String, IndexNode> updates = newHashMap();
+        final Map<String, IndexDefinition> defnUpdates = newHashMap();
 
-        List<Editor> editors = newArrayListWithCapacity(original.size());
+        List<Editor> editors = newArrayListWithCapacity(original.size() + 1);
+
+        editors.add(new SubtreeEditor(new IndexDefnEditor(defnUpdates, INDEX_DEFINITIONS_NAME)
+                , INDEX_DEFINITIONS_NAME));
         for (Map.Entry<String, IndexNode> entry : original.entrySet()) {
             final String path = entry.getKey();
             final String name = entry.getValue().getName();
 
-            List<String> elements = newArrayList();
-            Iterables.addAll(elements, PathUtils.elements(path));
-            elements.add(INDEX_DEFINITIONS_NAME);
-            elements.add(name);
             editors.add(new SubtreeEditor(new DefaultEditor() {
                 @Override
                 public void leave(NodeState before, NodeState after) {
@@ -97,7 +102,7 @@ class IndexTracker {
                         log.error("Failed to open Lucene index at " + path, e);
                     }
                 }
-            }, elements.toArray(new String[elements.size()])));
+            }, Iterables.toArray(PathUtils.elements(path), String.class)));
         }
 
         EditorDiff.process(CompositeEditor.compose(editors), this.root, root);
@@ -118,6 +123,13 @@ class IndexTracker {
                 }
             }
         }
+
+        if(!defnUpdates.isEmpty()){
+            definitions = ImmutableMap.<String, IndexDefinition>builder()
+                    .putAll(filterKeys(originalDefns, not(in(defnUpdates.keySet()))))
+                    .putAll(filterValues(defnUpdates, notNull()))
+                    .build();
+        }
     }
 
     IndexNode acquireIndexNode(String path) {
@@ -127,6 +139,22 @@ class IndexTracker {
         } else {
             return findIndexNode(path);
         }
+    }
+
+    Collection<IndexDefinition> getDefinitions() {
+        return definitions.values();
+    }
+
+    IndexDefinition getDefinition(String path){
+        return definitions.get(path);
+    }
+
+    boolean hasDefinition(String path){
+        return definitions.containsKey(path);
+    }
+
+    int getDefinitionCount(){
+        return definitions.size();
     }
 
     Set<String> getIndexNodePaths(){
@@ -145,30 +173,79 @@ class IndexTracker {
 
         NodeState node = root;
         for (String name : PathUtils.elements(path)) {
-            node = root.getChildNode(name);
+            node = node.getChildNode(name);
         }
-        node = node.getChildNode(INDEX_DEFINITIONS_NAME);
 
+        final String indexName = PathUtils.getName(path);
         try {
-            for (ChildNodeEntry child : node.getChildNodeEntries()) {
-                node = child.getNodeState();
-                if (TYPE_LUCENE.equals(node.getString(TYPE_PROPERTY_NAME))) {
-                    index = IndexNode.open(child.getName(), node);
-                    if (index != null) {
-                        checkState(index.acquire());
-                        indices = ImmutableMap.<String, IndexNode>builder()
-                                .putAll(indices)
-                                .put(path, index)
-                                .build();
-                        return index;
-                    }
+            if (isLuceneIndexNode(node)) {
+                index = IndexNode.open(indexName, node);
+                if (index != null) {
+                    checkState(index.acquire());
+                    indices = ImmutableMap.<String, IndexNode>builder()
+                            .putAll(indices)
+                            .put(path, index)
+                            .build();
+                    return index;
                 }
+            } else if (node.exists()) {
+                log.warn("Cannot open Lucene Index at path {} as the index is not of type {}", path, TYPE_LUCENE);
             }
         } catch (IOException e) {
             log.error("Could not access the Lucene index at " + path, e);
         }
 
         return null;
+    }
+
+    private static boolean isLuceneIndexNode(NodeState node){
+        return TYPE_LUCENE.equals(node.getString(TYPE_PROPERTY_NAME));
+    }
+
+    /**
+     * Editor to diff the child nodes of /oak:index so as to update the IndexDefinitions
+     */
+    private static class IndexDefnEditor extends DefaultEditor {
+        final Map<String, IndexDefinition> defnUpdates;
+        final String basePath;
+
+        IndexDefnEditor(Map<String, IndexDefinition> defnUpdates, String basePath) {
+            this.defnUpdates = defnUpdates;
+            this.basePath = basePath;
+        }
+
+        @Override @CheckForNull
+        public Editor childNodeAdded(String name, NodeState after) throws CommitFailedException {
+            if(isLuceneIndexNode(after)) {
+                addEntry(name, after);
+            }
+            return null;
+        }
+
+        @Override @CheckForNull
+        public Editor childNodeChanged(String name, NodeState before, NodeState after) throws CommitFailedException {
+            if(isLuceneIndexNode(after)) {
+                addEntry(name, after);
+            }
+            return null;
+        }
+
+        @Override @CheckForNull
+        public Editor childNodeDeleted(String name, NodeState before) throws CommitFailedException {
+            if(isLuceneIndexNode(before)) {
+                defnUpdates.put(createPath(name), null);
+            }
+            return null;
+        }
+
+        private void addEntry(String name, NodeState state){
+            String path = createPath(name);
+            defnUpdates.put(path, new IndexDefinition(state, path));
+        }
+
+        private String createPath(String childName){
+            return PathUtils.concat(basePath, childName);
+        }
     }
 
 }

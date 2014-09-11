@@ -39,6 +39,12 @@ public interface LuceneIndexConstants {
      */
     String EXCLUDE_PROPERTY_NAMES = "excludePropertyNames";
 
+    /**
+     * Only include properties with name in this set. If this property is defined
+     * then {@code excludePropertyNames} would be ignored
+     */
+    String INCLUDE_PROPERTY_NAMES = "includePropertyNames";
+
     String PERSISTENCE_NAME = "persistence";
 
     String PERSISTENCE_OAK = "repository";
@@ -53,5 +59,29 @@ public interface LuceneIndexConstants {
      * Experimental flag to control storage behavior: 'null' or 'true' means the content is stored
      */
     String EXPERIMENTAL_STORAGE = "oak.experimental.storage";
+
+    /**
+     * Determines if full text indexing is enabled for this index definition
+     */
+    String FULL_TEXT_ENABLED = "fulltextEnabled";
+
+    String STORE_NODE_NAME = "storeNodeName";
+
+    /**
+     * Simulated cost used while test are being run. Used
+     */
+    String TEST_MODE_COST = "simulatedCostForTest";
+
+    /**
+     * Name of the native function which this index supports. If not specified it
+     * defaults to index node name
+     */
+    String FUNC_NAME = "functionName";
+
+    /**
+     * Type of the property being indexed defined as part of property definition
+     * under the given index definition
+     */
+    String PROP_TYPE = "propertyType";
 
 }
