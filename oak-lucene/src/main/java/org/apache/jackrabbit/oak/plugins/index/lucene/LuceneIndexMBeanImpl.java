@@ -43,8 +43,11 @@ import com.google.common.collect.Sets;
 import com.google.common.collect.TreeTraverser;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.commons.jmx.AnnotatedStandardMBean;
+import org.apache.jackrabbit.oak.commons.jmx.Name;
 import org.apache.jackrabbit.oak.plugins.index.lucene.BadIndexTracker.BadIndexInfo;
 import org.apache.jackrabbit.oak.plugins.index.lucene.LucenePropertyIndex.PathStoredFieldVisitor;
+import org.apache.jackrabbit.oak.spi.state.NodeState;
+import org.apache.jackrabbit.oak.spi.state.NodeStateUtils;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.BooleanClause;
@@ -63,6 +66,7 @@ import org.slf4j.LoggerFactory;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 import static org.apache.jackrabbit.oak.commons.IOUtils.humanReadableByteCount;
+import static org.apache.jackrabbit.oak.plugins.index.lucene.IndexDefinition.INDEX_DEFINITION_NODE;
 import static org.apache.jackrabbit.oak.plugins.index.lucene.TermFactory.newAncestorTerm;
 
 public class LuceneIndexMBeanImpl extends AnnotatedStandardMBean implements LuceneIndexMBean {
@@ -176,6 +180,22 @@ public class LuceneIndexMBeanImpl extends AnnotatedStandardMBean implements Luce
             }
         }
         return new String[0];
+    }
+
+    @Override
+    public String getStoredIndexDefinition(@Name("indexPath") String indexPath) {
+        IndexDefinition defn = indexTracker.getIndexDefinition(indexPath);
+        NodeState state;
+        if (defn != null){
+            state = defn.getDefinitionNodeState();
+        } else {
+            state = NodeStateUtils.getNode(indexTracker.getRoot(), indexPath + "/" + INDEX_DEFINITION_NODE);
+        }
+
+        if (state.exists()){
+            return NodeStateUtils.toString(state);
+        }
+        return "No index found at given path";
     }
 
     public void dumpIndexContent(String sourcePath, String destPath) throws IOException {

@@ -54,4 +54,7 @@ public interface LuceneIndexMBean {
             int maxPathCount
             ) throws IOException;
 
+    @Description("Returns the stored index definition for index at given path in string form")
+    String getStoredIndexDefinition(@Name("indexPath") String indexPath);
+
 }
