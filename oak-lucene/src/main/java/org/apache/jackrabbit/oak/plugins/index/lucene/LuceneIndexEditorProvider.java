@@ -25,6 +25,7 @@ import org.apache.jackrabbit.oak.plugins.index.IndexEditor;
 import org.apache.jackrabbit.oak.plugins.index.IndexEditorProvider;
 import org.apache.jackrabbit.oak.plugins.index.IndexUpdateCallback;
 import org.apache.jackrabbit.oak.plugins.index.IndexingContext;
+import org.apache.jackrabbit.oak.plugins.index.lucene.hybrid.DocumentQueue;
 import org.apache.jackrabbit.oak.plugins.index.lucene.hybrid.LocalIndexWriterFactory;
 import org.apache.jackrabbit.oak.plugins.index.lucene.hybrid.LuceneDocumentHolder;
 import org.apache.jackrabbit.oak.plugins.index.lucene.writer.DefaultIndexWriterFactory;
@@ -60,6 +61,7 @@ public class LuceneIndexEditorProvider implements IndexEditorProvider {
     private final IndexTracker indexTracker;
     private final MountInfoProvider mountInfoProvider;
     private GarbageCollectableBlobStore blobStore;
+    private DocumentQueue documentQueue;
 
     /**
      * Number of indexed Lucene document that can be held in memory
@@ -181,7 +183,7 @@ public class LuceneIndexEditorProvider implements IndexEditorProvider {
     private LuceneDocumentHolder getDocumentHolder(CommitContext commitContext){
         LuceneDocumentHolder holder = (LuceneDocumentHolder) commitContext.get(LuceneDocumentHolder.NAME);
         if (holder == null) {
-            holder = new LuceneDocumentHolder(inMemoryDocsLimit);
+            holder = new LuceneDocumentHolder(documentQueue, inMemoryDocsLimit);
             commitContext.set(LuceneDocumentHolder.NAME, holder);
         }
         return holder;
@@ -189,6 +191,10 @@ public class LuceneIndexEditorProvider implements IndexEditorProvider {
 
     public void setBlobStore(@Nullable GarbageCollectableBlobStore blobStore) {
         this.blobStore = blobStore;
+    }
+
+    public void setDocumentQueue(DocumentQueue documentQueue) {
+        this.documentQueue = documentQueue;
     }
 
     GarbageCollectableBlobStore getBlobStore() {

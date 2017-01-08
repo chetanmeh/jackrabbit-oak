@@ -113,7 +113,7 @@ public class DocumentQueue implements Closeable{
 
                     addAllSynchronously(docsPerIndex.asMap());
 
-                    currentTask.onComplete(completionHandler);
+                    scheduleQueuedDocsProcessing();
                 } catch (Throwable t) {
                     exceptionHandler.uncaughtException(Thread.currentThread(), t);
                 }
@@ -142,6 +142,11 @@ public class DocumentQueue implements Closeable{
         this.dropped = sp.getMeter("HYBRID_DROPPED", StatsOptions.DEFAULT);
     }
 
+    public boolean addIfNotFullWithoutWait(LuceneDoc doc){
+        checkState(!stopped);
+        return docsQueue.offer(doc);
+    }
+
     public boolean add(LuceneDoc doc){
         checkState(!stopped);
         boolean added = false;
@@ -150,16 +155,21 @@ public class DocumentQueue implements Closeable{
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        // Set the completion handler on the currently running task. Multiple calls
-        // to onComplete are not a problem here since we always pass the same value.
-        // Thus there is no question as to which of the handlers will effectively run.
-        currentTask.onComplete(completionHandler);
+        scheduleQueuedDocsProcessing();
+
         if (added) {
             queueSizeStats.inc();
         } else {
             dropped.mark();
         }
         return added;
+    }
+
+    public void scheduleQueuedDocsProcessing() {
+        // Set the completion handler on the currently running task. Multiple calls
+        // to onComplete are not a problem here since we always pass the same value.
+        // Thus there is no question as to which of the handlers will effectively run.
+        currentTask.onComplete(completionHandler);
     }
 
     public void addAllSynchronously(Map<String, Collection<LuceneDoc>> docsPerIndex) {
@@ -192,6 +202,7 @@ public class DocumentQueue implements Closeable{
 
         try{
             LuceneIndexWriter writer = indexNode.getLocalWriter();
+            boolean docAdded = false;
             for (LuceneDoc doc : docs) {
                 if (writer == null) {
                     //IndexDefinition per IndexNode might have changed and local
@@ -200,14 +211,23 @@ public class DocumentQueue implements Closeable{
                             "entry for [{}]", indexPath, doc.docPath);
                     return;
                 }
+                if (doc.isAddedToIndex()){
+                    //Skip already processed doc entry
+                    continue;
+                } else {
+                    doc.markAddedToIndex();
+                }
                 if (doc.delete) {
                     writer.deleteDocuments(doc.docPath);
                 } else {
                     writer.updateDocument(doc.docPath, doc.doc);
                 }
+                docAdded = true;
                 log.trace("Updated index with doc {}", doc);
             }
-            indexNode.refreshReadersOnWriteIfRequired();
+            if (docAdded) {
+                indexNode.refreshReadersOnWriteIfRequired();
+            }
         } catch (Exception e) {
             //For now we just log it. Later we need to see if frequent error then to
             //temporarily disable indexing for this index
