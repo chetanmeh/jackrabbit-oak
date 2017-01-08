@@ -31,10 +31,12 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.Striped;
 import org.apache.jackrabbit.oak.commons.concurrent.NotifyingFutureTask;
 import org.apache.jackrabbit.oak.plugins.index.lucene.IndexNode;
 import org.apache.jackrabbit.oak.plugins.index.lucene.IndexTracker;
@@ -58,6 +60,7 @@ public class DocumentQueue implements Closeable{
     private final CounterStats queueSizeStats;
     private final MeterStats added;
     private final MeterStats dropped;
+    private final Striped<Lock> locks = Striped.lock(64);
 
     /**
      * Time in millis for which add call to queue
@@ -176,7 +179,14 @@ public class DocumentQueue implements Closeable{
         //If required it can optimized by indexing diff indexes in parallel
         //Something to consider if it becomes a bottleneck
         for (Map.Entry<String, Collection<LuceneDoc>> e : docsPerIndex.entrySet()) {
-            processDocs(e.getKey(), e.getValue());
+            String indexPath = e.getKey();
+            Lock indexingLock = locks.get(indexPath);
+            indexingLock.lock();
+            try {
+                processDocs(indexPath, e.getValue());
+            } finally {
+                indexingLock.unlock();
+            }
             added.mark(e.getValue().size());
         }
     }
