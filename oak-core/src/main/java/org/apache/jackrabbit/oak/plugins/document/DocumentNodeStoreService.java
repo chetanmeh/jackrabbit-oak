@@ -292,6 +292,7 @@ public class DocumentNodeStoreService {
 
     private DocumentNodeStore nodeStore;
     private ObserverTracker observerTracker;
+    private JournalPropertyServiceTracker journalPropertyServiceTracker = new JournalPropertyServiceTracker();
     private ComponentContext context;
     private Whiteboard whiteboard;
     private long deactivationTimestamp = 0;
@@ -444,6 +445,7 @@ public class DocumentNodeStoreService {
                 setCacheSegmentCount(cacheSegmentCount).
                 setCacheStackMoveDistance(cacheStackMoveDistance).
                 setBundlingDisabled(bundlingDisabled).
+                setJournalServicePropertyTracker(journalPropertyServiceTracker).
                 setLeaseCheck(!ClusterNodeInfo.DEFAULT_LEASE_CHECK_DISABLED /* OAK-2739: enabled by default */).
                 setLeaseFailureHandler(new LeaseFailureHandler() {
                     
@@ -573,6 +575,7 @@ public class DocumentNodeStoreService {
 
         observerTracker = new ObserverTracker(nodeStore);
         observerTracker.start(context.getBundleContext());
+        journalPropertyServiceTracker.start(whiteboard);
 
         DocumentStore ds = nodeStore.getDocumentStore();
 
@@ -612,6 +615,10 @@ public class DocumentNodeStoreService {
     protected void deactivate() {
         if (observerTracker != null) {
             observerTracker.stop();
+        }
+
+        if (journalPropertyServiceTracker!= null){
+            journalPropertyServiceTracker.stop();
         }
 
         unregisterNodeStore();

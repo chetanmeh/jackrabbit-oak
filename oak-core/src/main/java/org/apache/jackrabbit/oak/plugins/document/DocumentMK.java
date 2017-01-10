@@ -583,6 +583,8 @@ public class DocumentMK {
         private Map<CacheType, PersistentCacheStats> persistentCacheStats =
                 new EnumMap<CacheType, PersistentCacheStats>(CacheType.class);
         private boolean bundlingDisabled;
+        private JournalPropertyServiceTracker journalServicePropertyTracker =
+                new JournalPropertyServiceTracker();
 
         public Builder() {
         }
@@ -1083,6 +1085,15 @@ public class DocumentMK {
 
         public boolean isPrefetchExternalChanges() {
             return prefetchExternalChanges;
+        }
+
+        public Builder setJournalServicePropertyTracker(JournalPropertyServiceTracker tracker) {
+            journalServicePropertyTracker = tracker;
+            return this;
+        }
+
+        public JournalPropertyServiceTracker getJournalServicePropertyTracker() {
+            return journalServicePropertyTracker;
         }
 
         VersionGCSupport createVersionGCSupport() {
