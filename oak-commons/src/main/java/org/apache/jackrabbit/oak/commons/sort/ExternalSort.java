@@ -34,6 +34,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.stream.Collectors;
 import java.util.zip.Deflater;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -164,7 +165,7 @@ public class ExternalSort {
      * This will simply load the file by blocks of lines, then sort them in-memory, and write the
      * result to temporary files that have to be merged later. You can specify a bound on the number
      * of temporary files that will be created.
-     * 
+     *
      * @param file
      *            some flat file
      * @param cmp
@@ -183,8 +184,39 @@ public class ExternalSort {
      * @return a list of temporary flat files
      */
     public static List<File> sortInBatch(File file, Comparator<String> cmp,
-            int maxtmpfiles, long maxMemory, Charset cs, File tmpdirectory,
-            boolean distinct, int numHeader, boolean usegzip)
+                                         int maxtmpfiles, long maxMemory, Charset cs, File tmpdirectory,
+                                         boolean distinct, int numHeader, boolean usegzip)
+            throws IOException {
+        return sortInBatch(file, cmp, maxtmpfiles, maxMemory, cs, tmpdirectory, distinct, numHeader, usegzip, false);
+    }
+
+    /**
+     * This will simply load the file by blocks of lines, then sort them in-memory, and write the
+     * result to temporary files that have to be merged later. You can specify a bound on the number
+     * of temporary files that will be created.
+     * 
+     * @param file
+     *            some flat file
+     * @param cmp
+     *            string comparator
+     * @param maxtmpfiles
+     *            maximal number of temporary files
+     * @param cs
+     *            character set to use (can use Charset.defaultCharset())
+     * @param tmpdirectory
+     *            location of the temporary files (set to null for default location)
+     * @param distinct
+     *            Pass <code>true</code> if duplicate lines should be discarded.
+     * @param numHeader
+     *            number of lines to preclude before sorting starts
+     * @param usegzip use gzip compression for the temporary files
+     * @param parallel set to <code>true</code> when sorting in parallel
+     * @return a list of temporary flat files
+     */
+    public static List<File> sortInBatch(File file, Comparator<String> cmp,
+                                         int maxtmpfiles, long maxMemory, Charset cs, File tmpdirectory,
+                                         boolean distinct, int numHeader, boolean usegzip,
+                                         boolean parallel)
             throws IOException {
         List<File> files = new ArrayList<File>();
         BufferedReader fbr = new BufferedReader(new InputStreamReader(
@@ -216,13 +248,13 @@ public class ExternalSort {
                                 .estimatedSizeOf(line);
                     }
                     files.add(sortAndSave(tmplist, cmp, cs,
-                            tmpdirectory, distinct, usegzip));
+                            tmpdirectory, distinct, usegzip, parallel));
                     tmplist.clear();
                 }
             } catch (EOFException oef) {
                 if (tmplist.size() > 0) {
                     files.add(sortAndSave(tmplist, cmp, cs,
-                            tmpdirectory, distinct, usegzip));
+                            tmpdirectory, distinct, usegzip, parallel));
                     tmplist.clear();
                 }
             }
@@ -260,7 +292,7 @@ public class ExternalSort {
 
     /**
      * Sort a list and save it to a temporary file
-     * 
+     *
      * @return the file containing the sorted data
      * @param tmplist
      *            data to be sorted
@@ -274,9 +306,38 @@ public class ExternalSort {
      *            Pass <code>true</code> if duplicate lines should be discarded.
      */
     public static File sortAndSave(List<String> tmplist,
-            Comparator<String> cmp, Charset cs, File tmpdirectory,
-            boolean distinct, boolean usegzip) throws IOException {
-        Collections.sort(tmplist, cmp);
+                                   Comparator<String> cmp, Charset cs, File tmpdirectory,
+                                   boolean distinct, boolean usegzip) throws IOException {
+        return sortAndSave(tmplist, cmp, cs, tmpdirectory, distinct, usegzip, false);
+    }
+
+    /**
+     * Sort a list and save it to a temporary file
+     * 
+     * @return the file containing the sorted data
+     * @param tmplist
+     *            data to be sorted
+     * @param cmp
+ *            string comparator
+     * @param cs
+*            charset to use for output (can use Charset.defaultCharset())
+     * @param tmpdirectory
+*            location of the temporary files (set to null for default location)
+     * @param distinct
+     *       Pass <code>true</code> if duplicate lines should be discarded.
+     * @param parallel
+     *       parallel set to <code>true</code> when sorting in parallel
+     */
+    public static File sortAndSave(List<String> tmplist,
+                                   Comparator<String> cmp, Charset cs, File tmpdirectory,
+                                   boolean distinct, boolean usegzip,
+                                   boolean parallel) throws IOException {
+        if (parallel) {
+            final int listSize = tmplist.size();
+            tmplist = tmplist.parallelStream().sorted(cmp).collect(Collectors.toCollection(() -> new ArrayList<>(listSize)));
+        } else {
+            Collections.sort(tmplist, cmp);
+        }
         File newtmpfile = File.createTempFile("sortInBatch",
                 "flatfile", tmpdirectory);
         newtmpfile.deleteOnExit();
