@@ -16,6 +16,7 @@
  */
 package org.apache.jackrabbit.oak.commons.sort;
 
+import static java.util.function.Function.identity;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -34,6 +35,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Scanner;
+
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -248,7 +250,7 @@ public class ExternalSortTest {
         writeStringToFile(out, "HEADER, HEADER\n");
 
         ExternalSort.mergeSortedFiles(this.fileList, out, cmp,
-                Charset.defaultCharset(), true, true, false);
+                Charset.defaultCharset(), true, true, false, identity(), identity());
 
         bf = new BufferedReader(new FileReader(out));
 
@@ -385,7 +387,7 @@ public class ExternalSortTest {
         
         // now merge with append
         ExternalSort.mergeSortedFiles(listOfFiles, out, cmp,
-                                         Charset.defaultCharset(), distinct, true, false);
+                                         Charset.defaultCharset(), distinct, true, false, identity(), identity());
         ArrayList<String> result = readLines(out);
         
         if (distinct) {
@@ -433,7 +435,7 @@ public class ExternalSortTest {
 
         // now merge with append
         ExternalSort.mergeSortedFiles(listOfFiles, out, cmp,
-                Charset.defaultCharset(), false, true, usegzip);
+                Charset.defaultCharset(), false, true, usegzip, identity(), identity());
 
         ArrayList<String> result = readLines(out);
 
