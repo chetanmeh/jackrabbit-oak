@@ -24,7 +24,6 @@ import java.io.StringWriter;
 import java.util.Arrays;
 
 import org.apache.jackrabbit.oak.api.Type;
-import org.apache.jackrabbit.oak.plugins.memory.EmptyNodeState;
 import org.apache.jackrabbit.oak.spi.blob.BlobStore;
 import org.apache.jackrabbit.oak.spi.blob.MemoryBlobStore;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
@@ -33,7 +32,6 @@ import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
 import static org.apache.jackrabbit.oak.plugins.memory.EmptyNodeState.EMPTY_NODE;
-import static org.junit.Assert.*;
 
 public class NodeStateWriterTest {
     @Rule
@@ -45,7 +43,7 @@ public class NodeStateWriterTest {
 
     @Test
     public void newLines() throws Exception{
-        NodeStateWriter nw = new NodeStateWriter(blobStore, sw);
+        NodeStateEntryWriter nw = new NodeStateEntryWriter(blobStore, sw);
 
         builder.setProperty("foo", 1);
         builder.setProperty("foo2", Arrays.asList("a", "b"), Type.STRINGS);

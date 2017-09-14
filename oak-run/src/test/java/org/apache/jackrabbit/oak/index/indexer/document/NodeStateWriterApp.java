@@ -26,7 +26,6 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import com.codahale.metrics.MetricRegistry;
-import com.google.common.base.Charsets;
 import com.google.common.io.Files;
 import joptsimple.OptionParser;
 import org.apache.jackrabbit.oak.api.CommitFailedException;
@@ -92,7 +91,7 @@ public class NodeStateWriterApp {
         File dir = new File("/home/chetanm/data/oak/oak-run-indexing/document-traversal");
         File file = new File(dir, "nodes.txt");
         try(Writer writer = Files.newWriter(file, UTF_8)) {
-            NodeStateWriter nsw = new NodeStateWriter(dns.getBlobStore(), writer);
+            NodeStateEntryWriter nsw = new NodeStateEntryWriter(dns.getBlobStore(), writer);
             nsw.setPropNameDictionaryEnabled(true);
             nsw.setCompressionEnabled(true);
             for (NodeStateEntry e : nsep) {
@@ -103,7 +102,7 @@ public class NodeStateWriterApp {
         }
     }
 
-    private void writeDictionary(File dir, NodeStateWriter nsw) throws IOException {
+    private void writeDictionary(File dir, NodeStateEntryWriter nsw) throws IOException {
         JSONObject jo = new JSONObject(nsw.getPropNameDict());
         File dict = new File(dir, "dict.json");
         Files.write(JsopBuilder.prettyPrint(jo.toJSONString()), dict, UTF_8);

@@ -34,8 +34,11 @@ import org.apache.jackrabbit.oak.spi.blob.BlobStore;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 
 import static com.google.common.base.StandardSystemProperty.LINE_SEPARATOR;
+import static org.apache.jackrabbit.oak.commons.sort.EscapeUtils.escapeLineBreak;
 
-public class NodeStateWriter implements Closeable{
+public class NodeStateEntryWriter implements Closeable{
+    public static final char DELIMITER = '|';
+
     private final Writer writer;
     private final JsopBuilder jw = new JsopBuilder();
     private final JsonSerializer serializer;
@@ -44,15 +47,15 @@ public class NodeStateWriter implements Closeable{
     private TextCompressor compressor = new TextCompressor();
     private boolean compressionEnabled;
 
-    public NodeStateWriter(BlobStore blobStore, Writer writer) throws IOException {
+    public NodeStateEntryWriter(BlobStore blobStore, Writer writer) throws IOException {
         this.writer = writer;
         this.serializer = new JsonSerializer(jw, new BlobIdSerializer(blobStore));
     }
 
     public void write(NodeStateEntry e) throws IOException {
         String test = asText(e.getNodeState());
-        writer.append(e.getPath())
-                .append("|")
+        writer.append(escapeLineBreak(e.getPath())) //Paths can have line breaks so escape them
+                .append(DELIMITER)
                 .append(test)
                 .append(LINE_SEPARATOR.value());
     }
